@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      - DEBUG=${DEBUG:-true}
     volumes:
       # Persist database and downloads
       - ./data:/app/data

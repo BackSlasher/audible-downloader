@@ -80,11 +80,16 @@ async function startLogin() {
         const res = await fetch(`/api/auth/start?locale=${locale}`);
         const data = await res.json();
 
+        // Clear any previous callback URL
+        document.getElementById('callback-url').value = '';
+
         // Open OAuth URL in new window
         window.open(data.url, '_blank');
 
         // Show instructions
         document.getElementById('auth-instructions').classList.remove('hidden');
+
+        console.log('Login started at:', new Date().toISOString());
     } catch (err) {
         alert('Failed to start login: ' + err.message);
     }
@@ -102,11 +107,11 @@ async function completeLogin() {
         const res = await fetch(`/api/auth/callback?response_url=${encodeURIComponent(callbackUrl)}`);
         const data = await res.json();
 
-        if (data.success) {
+        if (res.ok && data.success) {
             currentUser = { email: data.email, authenticated: true };
             showLoggedIn();
         } else {
-            alert('Login failed');
+            alert('Login failed: ' + (data.detail || JSON.stringify(data)));
         }
     } catch (err) {
         alert('Login failed: ' + err.message);

@@ -1,12 +1,19 @@
 """FastAPI web application."""
 
 import asyncio
+import base64
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs
 
 import audible
+import httpx
+from audible.localization import Locale
+from audible.login import build_oauth_url, create_code_verifier
+from audible.register import register
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +24,8 @@ from audible_cli.models import Library
 from . import db
 from .worker import worker, DOWNLOADS_DIR
 
-app = FastAPI(title="Audible Downloader")
+DEBUG = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
+app = FastAPI(title="Audible Downloader", debug=DEBUG)
 
 # Session secret (in production, use environment variable)
 SECRET_KEY = secrets.token_hex(32)
@@ -94,23 +102,37 @@ async def get_me(request: Request):
 @app.get("/api/auth/start")
 async def auth_start(request: Request, locale: str = "us"):
     """Start Audible authentication - returns URL for OAuth."""
-    # Create authenticator and get login URL
-    code_verifier = secrets.token_urlsafe(32)
-    oauth_url, serial = audible.Authenticator.get_oauth_url(
-        locale=locale,
-        with_username=False,
-        code_verifier=code_verifier
-    )
+    try:
+        loc = Locale(locale)
+        code_verifier = create_code_verifier()
 
-    # Store in session for callback
-    session = get_session(request)
-    session["oauth_locale"] = locale
-    session["oauth_verifier"] = code_verifier
-    session["oauth_serial"] = serial
+        oauth_url, serial = build_oauth_url(
+            country_code=loc.country_code,
+            domain=loc.domain,
+            market_place_id=loc.market_place_id,
+            code_verifier=code_verifier,
+            with_username=False
+        )
 
-    response = JSONResponse({"url": oauth_url})
-    set_session(response, session)
-    return response
+        # Store in session for callback (code_verifier is already base64url bytes)
+        session = get_session(request)
+        session["oauth_locale"] = locale
+        session["oauth_verifier"] = code_verifier.decode("ascii")  # Already base64url
+        session["oauth_serial"] = serial
+        session["oauth_domain"] = loc.domain
+
+        if DEBUG:
+            import time
+            print(f"DEBUG auth_start at {time.time()}: serial={serial[:20]}..., verifier={code_verifier[:20]}...")
+
+        response = JSONResponse({"url": oauth_url})
+        set_session(response, session)
+        return response
+    except Exception as e:
+        if DEBUG:
+            import traceback
+            raise HTTPException(500, f"Auth start failed: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Auth start failed: {e}")
 
 
 @app.get("/api/auth/callback")
@@ -119,25 +141,49 @@ async def auth_callback(request: Request, response_url: str):
     session = get_session(request)
 
     locale = session.get("oauth_locale", "us")
-    code_verifier = session.get("oauth_verifier")
+    code_verifier_b64 = session.get("oauth_verifier")
     serial = session.get("oauth_serial")
+    domain = session.get("oauth_domain")
 
-    if not code_verifier or not serial:
-        raise HTTPException(400, "No pending authentication")
+    if not code_verifier_b64 or not serial or not domain:
+        missing = []
+        if not code_verifier_b64: missing.append("code_verifier")
+        if not serial: missing.append("serial")
+        if not domain: missing.append("domain")
+        raise HTTPException(400, f"No pending authentication (missing: {', '.join(missing)}). Did you start login first?")
 
     try:
-        # Complete authentication
-        auth = audible.Authenticator.from_oauth_callback(
-            response_url,
-            locale=locale,
+        # code_verifier was stored as ASCII string, convert back to bytes
+        code_verifier = code_verifier_b64.encode("ascii")
+
+        # Parse authorization code from response URL
+        parsed_url = httpx.URL(response_url)
+        query_params = parse_qs(parsed_url.query.decode())
+        authorization_code = query_params.get("openid.oa2.authorization_code", [None])[0]
+
+        if not authorization_code:
+            raise HTTPException(400, "No authorization code in callback URL")
+
+        # Register device with Audible
+        if DEBUG:
+            import time
+            print(f"DEBUG register at {time.time()}: auth_code={authorization_code[:20]}..., verifier_len={len(code_verifier)}, domain={domain}, serial={serial[:20]}...")
+
+        register_data = register(
+            authorization_code=authorization_code,
             code_verifier=code_verifier,
-            serial=serial
+            domain=domain,
+            serial=serial,
+            with_username=False
         )
 
-        # Get user email from auth
-        async with audible.AsyncClient(auth=auth) as client:
-            user_info = await client.get("1.0/customer/information")
-            email = user_info.get("email", user_info.get("name", "unknown"))
+        # Create authenticator from registration data
+        auth = audible.Authenticator()
+        auth.locale = Locale(locale)
+        auth._update_attrs(with_username=False, **register_data)
+
+        # Get user email from auth (populated during registration)
+        email = auth.customer_info.get("email", "unknown") if auth.customer_info else "unknown"
 
         # Save user
         auth_data = auth.to_dict()
@@ -148,12 +194,18 @@ async def auth_callback(request: Request, response_url: str):
         session.pop("oauth_locale", None)
         session.pop("oauth_verifier", None)
         session.pop("oauth_serial", None)
+        session.pop("oauth_domain", None)
 
         response = JSONResponse({"success": True, "email": email})
         set_session(response, session)
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
+        if DEBUG:
+            import traceback
+            raise HTTPException(400, f"Authentication failed: {e}\n{traceback.format_exc()}")
         raise HTTPException(400, f"Authentication failed: {e}")
 
 
