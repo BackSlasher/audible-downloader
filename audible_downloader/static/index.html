@@ -41,15 +41,15 @@
             </section>
 
             <!-- Library Section -->
-            <section id="library-section" class="hidden">
-                <div class="section-header">
-                    <h2>Your Library</h2>
-                    <div class="actions">
+            <section id="library-section" class="hidden collapsible">
+                <div class="section-header" onclick="toggleSection('library-section')">
+                    <h2><span class="collapse-icon">▼</span> Your Library</h2>
+                    <div class="actions" onclick="event.stopPropagation()">
                         <button id="refresh-btn" class="btn">Refresh</button>
                         <button id="download-selected-btn" class="btn primary" disabled>Download Selected</button>
                     </div>
                 </div>
-                <div id="library-grid" class="book-grid"></div>
+                <div id="library-grid" class="book-grid section-content"></div>
             </section>
 
             <!-- Jobs Section -->

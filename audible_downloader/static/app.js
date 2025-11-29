@@ -293,3 +293,8 @@ function escapeHtml(str) {
         "'": '&#39;'
     }[m]));
 }
+
+function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    section.classList.toggle('collapsed');
+}

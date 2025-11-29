@@ -182,12 +182,15 @@ async def auth_callback(request: Request, response_url: str):
         auth.locale = Locale(locale)
         auth._update_attrs(with_username=False, **register_data)
 
-        # Get user email from auth (populated during registration)
-        email = auth.customer_info.get("email", "unknown") if auth.customer_info else "unknown"
+        # Get user name from auth (populated during registration)
+        # customer_info has 'name' and 'given_name', not 'email'
+        name = "unknown"
+        if auth.customer_info:
+            name = auth.customer_info.get("name") or auth.customer_info.get("given_name") or "unknown"
 
         # Save user
         auth_data = auth.to_dict()
-        user = db.get_or_create_user(email, auth_data)
+        user = db.get_or_create_user(name, auth_data)
 
         # Update session
         session["user_id"] = user.id
@@ -196,7 +199,7 @@ async def auth_callback(request: Request, response_url: str):
         session.pop("oauth_serial", None)
         session.pop("oauth_domain", None)
 
-        response = JSONResponse({"success": True, "email": email})
+        response = JSONResponse({"success": True, "email": name})
         set_session(response, session)
         return response
 
