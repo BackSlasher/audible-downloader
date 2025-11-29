@@ -92,30 +92,6 @@ section {
     gap: 10px;
 }
 
-/* Collapsible sections */
-.collapsible .section-header {
-    cursor: pointer;
-    user-select: none;
-}
-
-.collapsible .section-header:hover h2 {
-    opacity: 0.8;
-}
-
-.collapse-icon {
-    display: inline-block;
-    transition: transform 0.2s;
-    margin-right: 8px;
-}
-
-.collapsible.collapsed .collapse-icon {
-    transform: rotate(-90deg);
-}
-
-.collapsible.collapsed .section-content {
-    display: none;
-}
-
 h2 {
     color: #ff6b35;
     margin-bottom: 20px;

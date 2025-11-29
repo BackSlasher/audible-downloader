@@ -220,13 +220,6 @@ async function loadJobs() {
         const res = await fetch('/api/jobs');
         const data = await res.json();
         renderJobs(data.jobs);
-
-        // Also refresh downloads if any jobs completed
-        const hasCompleted = data.jobs.some(j => j.status === 'completed');
-        if (hasCompleted) {
-            loadDownloads();
-            loadLibrary(); // Refresh to show downloaded status
-        }
     } catch (err) {
         console.error('Failed to load jobs:', err);
     }
@@ -294,7 +287,3 @@ function escapeHtml(str) {
     }[m]));
 }
 
-function toggleSection(sectionId) {
-    const section = document.getElementById(sectionId);
-    section.classList.toggle('collapsed');
-}

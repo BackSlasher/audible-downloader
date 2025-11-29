@@ -40,18 +40,6 @@
                 </div>
             </section>
 
-            <!-- Library Section -->
-            <section id="library-section" class="hidden collapsible">
-                <div class="section-header" onclick="toggleSection('library-section')">
-                    <h2><span class="collapse-icon">▼</span> Your Library</h2>
-                    <div class="actions" onclick="event.stopPropagation()">
-                        <button id="refresh-btn" class="btn">Refresh</button>
-                        <button id="download-selected-btn" class="btn primary" disabled>Download Selected</button>
-                    </div>
-                </div>
-                <div id="library-grid" class="book-grid section-content"></div>
-            </section>
-
             <!-- Jobs Section -->
             <section id="jobs-section" class="hidden">
                 <h2>Downloads</h2>
@@ -62,6 +50,18 @@
             <section id="downloads-section" class="hidden">
                 <h2>Downloaded Books</h2>
                 <div id="downloads-list"></div>
+            </section>
+
+            <!-- Library Section -->
+            <section id="library-section" class="hidden">
+                <div class="section-header">
+                    <h2>Your Library</h2>
+                    <div class="actions">
+                        <button id="refresh-btn" class="btn">Refresh</button>
+                        <button id="download-selected-btn" class="btn primary" disabled>Download Selected</button>
+                    </div>
+                </div>
+                <div id="library-grid" class="book-grid"></div>
             </section>
         </main>
     </div>
