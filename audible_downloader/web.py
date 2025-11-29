@@ -27,8 +27,20 @@ from .worker import worker, DOWNLOADS_DIR
 DEBUG = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
 app = FastAPI(title="Audible Downloader", debug=DEBUG)
 
-# Session secret (in production, use environment variable)
-SECRET_KEY = secrets.token_hex(32)
+# Session secret - persisted to survive restarts
+def get_or_create_secret():
+    secret_file = Path("data/.secret_key")
+    if env_secret := os.getenv("SECRET_KEY"):
+        return env_secret
+    if secret_file.exists():
+        return secret_file.read_text().strip()
+    # Generate and save new secret
+    secret_file.parent.mkdir(parents=True, exist_ok=True)
+    new_secret = secrets.token_hex(32)
+    secret_file.write_text(new_secret)
+    return new_secret
+
+SECRET_KEY = get_or_create_secret()
 serializer = URLSafeSerializer(SECRET_KEY)
 
 # Static files

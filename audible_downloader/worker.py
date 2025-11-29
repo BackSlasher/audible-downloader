@@ -126,9 +126,14 @@ class Worker:
             ext = "aaxc" if is_aaxc else "aax"
             audio_file = book_dir / f"audio.{ext}"
 
+            # User-Agent required by Audible CDN
+            download_headers = {"User-Agent": "Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0"}
+
             if not audio_file.exists():
-                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as http:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), headers=download_headers) as http:
                     async with http.stream("GET", str(url), follow_redirects=True) as resp:
+                        resp.raise_for_status()
+
                         total = int(resp.headers.get("content-length", 0))
                         downloaded = 0
 
