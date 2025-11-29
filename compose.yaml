@@ -1,10 +1,20 @@
 services:
-  audible-downloader:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist database and downloads
+      - ./data:/app/data
+
+  # CLI mode (optional, for interactive use)
+  cli:
     build: .
     stdin_open: true
     tty: true
+    entrypoint: ["uv", "run", "audible-downloader"]
     volumes:
-      # Mount downloads directory for output
       - ./downloads:/app/downloads
-      # Mount config directory to persist authentication
       - ./.audible-downloader:/app/.audible-downloader
+    profiles:
+      - cli

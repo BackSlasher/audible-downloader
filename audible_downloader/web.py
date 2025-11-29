@@ -1,0 +1,319 @@
+"""FastAPI web application."""
+
+import asyncio
+import json
+import secrets
+from pathlib import Path
+from typing import Optional
+
+import audible
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from itsdangerous import URLSafeSerializer
+
+from audible_cli.models import Library
+
+from . import db
+from .worker import worker, DOWNLOADS_DIR
+
+app = FastAPI(title="Audible Downloader")
+
+# Session secret (in production, use environment variable)
+SECRET_KEY = secrets.token_hex(32)
+serializer = URLSafeSerializer(SECRET_KEY)
+
+# Static files
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.on_event("startup")
+async def startup():
+    """Initialize on startup."""
+    db.init_db()
+    worker.start()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Cleanup on shutdown."""
+    worker.stop()
+
+
+# Session helpers
+
+def get_session(request: Request) -> dict:
+    """Get session data from cookie."""
+    cookie = request.cookies.get("session")
+    if cookie:
+        try:
+            return serializer.loads(cookie)
+        except Exception:
+            pass
+    return {}
+
+
+def set_session(response: Response, data: dict):
+    """Set session cookie."""
+    response.set_cookie(
+        "session",
+        serializer.dumps(data),
+        httponly=True,
+        max_age=86400 * 30,  # 30 days
+        samesite="lax"
+    )
+
+
+def get_current_user(request: Request) -> Optional[db.User]:
+    """Get current user from session."""
+    session = get_session(request)
+    user_id = session.get("user_id")
+    if user_id:
+        return db.get_user_by_id(user_id)
+    return None
+
+
+# Routes
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """Serve main page."""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/me")
+async def get_me(request: Request):
+    """Get current user info."""
+    user = get_current_user(request)
+    if user:
+        return {"email": user.email, "authenticated": True}
+    return {"authenticated": False}
+
+
+@app.get("/api/auth/start")
+async def auth_start(request: Request, locale: str = "us"):
+    """Start Audible authentication - returns URL for OAuth."""
+    # Create authenticator and get login URL
+    code_verifier = secrets.token_urlsafe(32)
+    oauth_url, serial = audible.Authenticator.get_oauth_url(
+        locale=locale,
+        with_username=False,
+        code_verifier=code_verifier
+    )
+
+    # Store in session for callback
+    session = get_session(request)
+    session["oauth_locale"] = locale
+    session["oauth_verifier"] = code_verifier
+    session["oauth_serial"] = serial
+
+    response = JSONResponse({"url": oauth_url})
+    set_session(response, session)
+    return response
+
+
+@app.get("/api/auth/callback")
+async def auth_callback(request: Request, response_url: str):
+    """Complete authentication with callback URL from browser."""
+    session = get_session(request)
+
+    locale = session.get("oauth_locale", "us")
+    code_verifier = session.get("oauth_verifier")
+    serial = session.get("oauth_serial")
+
+    if not code_verifier or not serial:
+        raise HTTPException(400, "No pending authentication")
+
+    try:
+        # Complete authentication
+        auth = audible.Authenticator.from_oauth_callback(
+            response_url,
+            locale=locale,
+            code_verifier=code_verifier,
+            serial=serial
+        )
+
+        # Get user email from auth
+        async with audible.AsyncClient(auth=auth) as client:
+            user_info = await client.get("1.0/customer/information")
+            email = user_info.get("email", user_info.get("name", "unknown"))
+
+        # Save user
+        auth_data = auth.to_dict()
+        user = db.get_or_create_user(email, auth_data)
+
+        # Update session
+        session["user_id"] = user.id
+        session.pop("oauth_locale", None)
+        session.pop("oauth_verifier", None)
+        session.pop("oauth_serial", None)
+
+        response = JSONResponse({"success": True, "email": email})
+        set_session(response, session)
+        return response
+
+    except Exception as e:
+        raise HTTPException(400, f"Authentication failed: {e}")
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request):
+    """Log out current user."""
+    response = JSONResponse({"success": True})
+    response.delete_cookie("session")
+    return response
+
+
+@app.get("/api/library")
+async def get_library(request: Request):
+    """Fetch user's Audible library."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    try:
+        auth = audible.Authenticator.from_dict(user.auth_data)
+
+        async with audible.AsyncClient(auth=auth) as client:
+            library = await Library.from_api_full_sync(api_client=client)
+
+        # Get existing books for this user
+        existing_books = {b.asin: b for b in db.get_user_books(user.id)}
+
+        books = []
+        for item in library:
+            authors = ", ".join(a["name"] for a in (item.authors or []))
+            runtime = item.runtime_length_min or 0
+            hours, mins = divmod(runtime, 60)
+
+            existing = existing_books.get(item.asin)
+
+            books.append({
+                "asin": item.asin,
+                "title": item.full_title,
+                "author": authors,
+                "runtime": f"{hours}h {mins}m" if hours else f"{mins}m",
+                "cover": item.get_cover_url(res=500),
+                "downloaded": existing is not None,
+                "path": existing.path if existing else None
+            })
+
+        return {"books": books}
+
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch library: {e}")
+
+
+@app.post("/api/download")
+async def start_download(request: Request):
+    """Start download job for selected books."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    body = await request.json()
+    asins = body.get("asins", [])
+
+    if not asins:
+        raise HTTPException(400, "No books selected")
+
+    # Get book titles from library
+    auth = audible.Authenticator.from_dict(user.auth_data)
+    async with audible.AsyncClient(auth=auth) as client:
+        library = await Library.from_api_full_sync(api_client=client)
+
+    asin_to_title = {item.asin: item.full_title for item in library}
+
+    jobs = []
+    for asin in asins:
+        title = asin_to_title.get(asin, asin)
+        job = db.create_job(user.id, asin, title)
+        jobs.append({
+            "id": job.id,
+            "asin": job.asin,
+            "title": job.title,
+            "status": job.status.value
+        })
+
+    return {"jobs": jobs}
+
+
+@app.get("/api/jobs")
+async def get_jobs(request: Request):
+    """Get all jobs for current user."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    jobs = db.get_user_jobs(user.id)
+
+    return {
+        "jobs": [
+            {
+                "id": j.id,
+                "asin": j.asin,
+                "title": j.title,
+                "status": j.status.value,
+                "progress": j.progress,
+                "error": j.error,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None
+            }
+            for j in jobs
+        ]
+    }
+
+
+@app.get("/api/books")
+async def get_books(request: Request):
+    """Get downloaded books for current user."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    books = db.get_user_books(user.id)
+
+    return {
+        "books": [
+            {
+                "id": b.id,
+                "asin": b.asin,
+                "title": b.title,
+                "author": b.author,
+                "path": b.path,
+                "created_at": b.created_at.isoformat() if b.created_at else None
+            }
+            for b in books
+        ]
+    }
+
+
+@app.get("/api/download/{asin}")
+async def download_book_zip(request: Request, asin: str):
+    """Download the zip file for a book."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    book = db.get_book(user.id, asin)
+    if not book or not book.path:
+        raise HTTPException(404, "Book not found")
+
+    zip_file = Path(book.path) / "audiobook.zip"
+    if not zip_file.exists():
+        raise HTTPException(404, "Zip file not found")
+
+    safe_title = "".join(c for c in book.title if c.isalnum() or c in " -_").strip()[:50]
+
+    return FileResponse(
+        zip_file,
+        media_type="application/zip",
+        filename=f"{safe_title}.zip"
+    )
+
+
+def run_server(host: str = "0.0.0.0", port: int = 8000):
+    """Run the web server."""
+    import uvicorn
+    uvicorn.run(app, host=host, port=port)

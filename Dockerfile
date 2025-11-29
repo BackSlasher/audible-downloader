@@ -4,7 +4,6 @@ FROM ghcr.io/astral-sh/uv:debian
 RUN apt update && apt install -y \
     ffmpeg \
     libmp3lame0 \
-    mediainfo \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up workspace
@@ -18,8 +17,11 @@ COPY README.md .
 # Install the project
 RUN uv sync
 
-# Create directories for mounted volumes
-RUN mkdir -p /app/downloads /app/.audible-downloader
+# Create directories for data
+RUN mkdir -p /app/data /app/downloads
 
-# Set entrypoint to run the CLI interactively
-ENTRYPOINT ["uv", "run", "audible-downloader"]
+# Expose port for web UI
+EXPOSE 8000
+
+# Default to web mode
+CMD ["uv", "run", "uvicorn", "audible_downloader.web:app", "--host", "0.0.0.0", "--port", "8000"]
