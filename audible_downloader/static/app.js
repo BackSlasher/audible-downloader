@@ -238,13 +238,27 @@ function renderJobs(jobs) {
                 <span class="job-status ${job.status}">${job.status}</span>
                 ${job.error ? `<div style="color: #c0392b; font-size: 12px; margin-top: 5px;">${escapeHtml(job.error)}</div>` : ''}
             </div>
-            ${job.status === 'running' ? `
-                <div class="progress-bar">
-                    <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
-                </div>
-            ` : ''}
+            <div class="job-actions">
+                ${job.status === 'running' ? `
+                    <div class="progress-bar">
+                        <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
+                    </div>
+                ` : `
+                    <button class="btn danger small" onclick="deleteJob(${job.id})">Delete</button>
+                `}
+            </div>
         </div>
     `).join('');
+}
+
+async function deleteJob(jobId) {
+    if (!confirm('Delete this job?')) return;
+    try {
+        await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+        loadJobs();
+    } catch (err) {
+        alert('Failed to delete job: ' + err.message);
+    }
 }
 
 // Downloads
@@ -270,9 +284,22 @@ function renderDownloads(books) {
                 <div class="download-title">${escapeHtml(book.title)}</div>
                 <div class="download-author">${escapeHtml(book.author || '')}</div>
             </div>
-            <a href="/api/download/${book.asin}" class="btn primary">Download ZIP</a>
+            <div class="download-actions">
+                <a href="/api/download/${book.asin}" class="btn primary">Download ZIP</a>
+                <button class="btn danger small" onclick="deleteBook(${book.id}, '${escapeHtml(book.title)}')">Delete</button>
+            </div>
         </div>
     `).join('');
+}
+
+async function deleteBook(bookId, title) {
+    if (!confirm(`Delete "${title}" and all its files?`)) return;
+    try {
+        await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
+        loadDownloads();
+    } catch (err) {
+        alert('Failed to delete book: ' + err.message);
+    }
 }
 
 // Helpers

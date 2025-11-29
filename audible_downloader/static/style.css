@@ -76,6 +76,11 @@ header h1 {
     background: #c0392b;
 }
 
+.btn.small {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
 section {
     margin-bottom: 40px;
 }
@@ -254,13 +259,18 @@ h2 {
     background: #c0392b;
 }
 
+.job-actions, .download-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 .progress-bar {
     width: 200px;
     height: 6px;
     background: #333;
     border-radius: 3px;
     overflow: hidden;
-    margin-left: 20px;
 }
 
 .progress-bar-fill {

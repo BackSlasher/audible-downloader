@@ -380,6 +380,36 @@ async def download_book_zip(request: Request, asin: str):
     )
 
 
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(request: Request, job_id: int):
+    """Delete a job."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    if db.delete_job(job_id, user.id):
+        return {"success": True}
+    raise HTTPException(404, "Job not found")
+
+
+@app.delete("/api/books/{book_id}")
+async def delete_book(request: Request, book_id: int):
+    """Delete a downloaded book and its files."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    path = db.delete_book(book_id, user.id)
+    if path:
+        # Delete files from disk
+        import shutil
+        book_path = Path(path)
+        if book_path.exists():
+            shutil.rmtree(book_path)
+        return {"success": True}
+    raise HTTPException(404, "Book not found")
+
+
 def run_server(host: str = "0.0.0.0", port: int = 8000):
     """Run the web server."""
     import uvicorn

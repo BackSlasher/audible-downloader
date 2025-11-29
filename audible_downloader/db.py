@@ -321,3 +321,30 @@ def get_job(job_id: int) -> Optional[Job]:
                 completed_at=row["completed_at"]
             )
     return None
+
+
+def delete_job(job_id: int, user_id: int) -> bool:
+    """Delete a job. Returns True if deleted."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM jobs WHERE id = ? AND user_id = ?",
+            (job_id, user_id)
+        )
+        return cursor.rowcount > 0
+
+
+def delete_book(book_id: int, user_id: int) -> Optional[str]:
+    """Delete a book. Returns the path if deleted, None otherwise."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT path FROM books WHERE id = ? AND user_id = ?",
+            (book_id, user_id)
+        ).fetchone()
+
+        if row:
+            conn.execute(
+                "DELETE FROM books WHERE id = ? AND user_id = ?",
+                (book_id, user_id)
+            )
+            return row["path"]
+    return None
