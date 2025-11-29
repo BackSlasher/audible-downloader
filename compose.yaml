@@ -1,0 +1,10 @@
+services:
+  audible-downloader:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount downloads directory for output
+      - ./downloads:/app/downloads
+      # Mount config directory to persist authentication
+      - ./.audible-downloader:/app/.audible-downloader

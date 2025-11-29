@@ -1,0 +1,19 @@
+[project]
+name = "audible-downloader"
+version = "0.1.0"
+description = "CLI for downloading and converting Audible audiobooks to MP3"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "audible>=0.10.0",
+    "audible-cli>=0.3.3",
+    "inquirerpy>=0.3.4",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+audible-downloader = "audible_downloader.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
