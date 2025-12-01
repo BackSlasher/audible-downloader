@@ -30,7 +30,3 @@ uv run audible-downloader
 
 - Web UI: Data stored in `./data/` (database + downloads)
 - CLI: Downloads in `./downloads/`, auth in `./.audible-downloader/`
-
-## License
-
-MIT
