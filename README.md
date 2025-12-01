@@ -2,6 +2,8 @@
 
 Download and convert Audible audiobooks to MP3 with chapter splitting.
 
+![Web UI](docs/ui.png)
+
 ## Quick Start (Web UI)
 
 ```bash
