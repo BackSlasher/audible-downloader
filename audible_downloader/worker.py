@@ -416,6 +416,12 @@ class Worker:
         self.convert_worker = ConvertWorker()
 
     def start(self):
+        # Reset jobs stuck from previous run
+        try:
+            db.reset_stuck_jobs()
+        except Exception as e:
+            print(f"Reset stuck jobs failed: {e}")
+
         # Clean up orphaned directories on startup
         try:
             cleanup_orphaned_directories()

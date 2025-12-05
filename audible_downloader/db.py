@@ -413,3 +413,24 @@ def get_all_book_paths() -> set[str]:
     with get_db() as conn:
         rows = conn.execute("SELECT path FROM books WHERE path IS NOT NULL").fetchall()
         return {row["path"] for row in rows}
+
+
+def reset_stuck_jobs():
+    """Reset jobs stuck in active states back to pending."""
+    with get_db() as conn:
+        # Reset downloading -> pending_download
+        cursor = conn.execute(
+            "UPDATE jobs SET stage = ?, status = ?, progress = 0, progress_detail = NULL WHERE stage = ?",
+            (JobStage.PENDING_DOWNLOAD.value, JobStatus.PENDING.value, JobStage.DOWNLOADING.value)
+        )
+        download_reset = cursor.rowcount
+
+        # Reset converting -> pending_convert
+        cursor = conn.execute(
+            "UPDATE jobs SET stage = ?, status = ?, progress = 50, progress_detail = NULL WHERE stage = ?",
+            (JobStage.PENDING_CONVERT.value, JobStatus.PENDING.value, JobStage.CONVERTING.value)
+        )
+        convert_reset = cursor.rowcount
+
+        if download_reset or convert_reset:
+            print(f"Reset {download_reset} stuck downloads, {convert_reset} stuck conversions")
