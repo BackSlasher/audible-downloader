@@ -1,7 +1,7 @@
 FROM ghcr.io/astral-sh/uv:debian
 
 # Install system dependencies
-RUN apt update && apt install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt update && apt install -y ffmpeg sqlite3 && rm -rf /var/lib/apt/lists/*
 
 # Set up workspace
 WORKDIR /app

@@ -287,9 +287,8 @@ function renderJobs(jobs) {
                             <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
                         </div>
                         <span class="progress-detail">${escapeHtml(job.progress_detail || '')}</span>
-                    ` : `
-                        <button class="btn danger small" onclick="deleteJob(${job.id})">Delete</button>
-                    `}
+                    ` : ''}
+                    <button class="btn danger small" onclick="deleteJob(${job.id})">Delete</button>
                 </div>
             </div>
         `;
