@@ -308,17 +308,21 @@ async def start_download(request: Request):
     asin_to_title = {item.asin: item.full_title for item in library}
 
     jobs = []
+    skipped = 0
     for asin in asins:
         title = asin_to_title.get(asin, asin)
         job = db.create_job(user.id, asin, title)
-        jobs.append({
-            "id": job.id,
-            "asin": job.asin,
-            "title": job.title,
-            "status": job.status.value
-        })
+        if job:
+            jobs.append({
+                "id": job.id,
+                "asin": job.asin,
+                "title": job.title,
+                "status": job.status.value
+            })
+        else:
+            skipped += 1
 
-    return {"jobs": jobs}
+    return {"jobs": jobs, "skipped": skipped}
 
 
 @app.get("/api/jobs")

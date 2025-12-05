@@ -99,7 +99,8 @@ def init_db():
                 error TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, asin)
             );
 
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -113,6 +114,23 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
         """)
+
+        # Migrations for existing databases
+        migrations = [
+            "ALTER TABLE jobs ADD COLUMN stage TEXT DEFAULT 'pending_download'",
+            "ALTER TABLE jobs ADD COLUMN progress_detail TEXT",
+        ]
+        for sql in migrations:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Unique index (will fail if duplicates exist - clean them up first)
+        try:
+            conn.execute("CREATE UNIQUE INDEX idx_jobs_user_asin ON jobs(user_id, asin)")
+        except sqlite3.OperationalError:
+            pass  # Index already exists or duplicates exist
 
 
 @contextmanager
@@ -239,9 +257,17 @@ def save_book(user_id: int, asin: str, title: str, author: str, path: str) -> Bo
 
 # Job operations
 
-def create_job(user_id: int, asin: str, title: str) -> Job:
-    """Create a new download job."""
+def create_job(user_id: int, asin: str, title: str) -> Optional[Job]:
+    """Create a new download job. Returns None if active job already exists."""
     with get_db() as conn:
+        # Check for existing active job
+        existing = conn.execute(
+            "SELECT id FROM jobs WHERE user_id = ? AND asin = ? AND stage NOT IN (?, ?)",
+            (user_id, asin, JobStage.COMPLETED.value, JobStage.FAILED.value)
+        ).fetchone()
+        if existing:
+            return None
+
         cursor = conn.execute(
             "INSERT INTO jobs (user_id, asin, title, status, stage) VALUES (?, ?, ?, ?, ?)",
             (user_id, asin, title, JobStatus.PENDING.value, JobStage.PENDING_DOWNLOAD.value)

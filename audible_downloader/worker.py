@@ -97,8 +97,7 @@ class DownloadWorker:
     async def _download(self, job: db.Job, user: db.User):
         auth = audible.Authenticator.from_dict(user.auth_data)
 
-        user_dir = DOWNLOADS_DIR / user.email
-        book_dir = user_dir / _safe_filename(job.title)
+        book_dir = DOWNLOADS_DIR / str(job.id)
         book_dir.mkdir(parents=True, exist_ok=True)
 
         db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=5)
@@ -238,8 +237,7 @@ class ConvertWorker:
             if not user:
                 raise Exception("User not found")
 
-            user_dir = DOWNLOADS_DIR / user.email
-            book_dir = user_dir / _safe_filename(job.title)
+            book_dir = DOWNLOADS_DIR / str(job.id)
 
             # Load metadata
             meta_file = book_dir / "meta.json"
