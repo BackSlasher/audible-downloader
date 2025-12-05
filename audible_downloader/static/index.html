@@ -17,26 +17,44 @@
             <!-- Auth Section -->
             <section id="auth-section" class="hidden">
                 <h2>Login to Audible</h2>
-                <div class="auth-form">
-                    <label for="locale">Marketplace:</label>
-                    <select id="locale">
-                        <option value="us">United States</option>
-                        <option value="uk">United Kingdom</option>
-                        <option value="de">Germany</option>
-                        <option value="fr">France</option>
-                        <option value="au">Australia</option>
-                        <option value="ca">Canada</option>
-                        <option value="it">Italy</option>
-                        <option value="in">India</option>
-                        <option value="jp">Japan</option>
-                    </select>
-                    <button id="login-btn" class="btn primary">Login with Audible</button>
-                </div>
-                <div id="auth-instructions" class="hidden">
-                    <p>A new window has opened for Audible login.</p>
-                    <p>After logging in, copy the final URL from the browser and paste it below:</p>
-                    <input type="text" id="callback-url" placeholder="Paste the callback URL here...">
-                    <button id="complete-auth-btn" class="btn primary">Complete Login</button>
+                <div class="auth-flow">
+                    <div class="auth-step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <p>Select your marketplace and open Audible login:</p>
+                            <div class="auth-form">
+                                <select id="locale">
+                                    <option value="us">United States</option>
+                                    <option value="uk">United Kingdom</option>
+                                    <option value="de">Germany</option>
+                                    <option value="fr">France</option>
+                                    <option value="au">Australia</option>
+                                    <option value="ca">Canada</option>
+                                    <option value="it">Italy</option>
+                                    <option value="in">India</option>
+                                    <option value="jp">Japan</option>
+                                </select>
+                                <button id="login-btn" class="btn primary">Open Audible Login</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="auth-step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <p>After logging in, you'll see this page. Copy the URL from your browser's address bar:</p>
+                            <img src="/static/amazon-callback.png" alt="Amazon callback page" class="auth-screenshot">
+                        </div>
+                    </div>
+                    <div class="auth-step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <p>Paste the URL here:</p>
+                            <div class="auth-form">
+                                <input type="text" id="callback-url" placeholder="Paste the callback URL here...">
+                                <button id="complete-auth-btn" class="btn primary">Complete Login</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 

@@ -87,11 +87,6 @@ async function startLogin() {
 
         // Open OAuth URL in new window
         window.open(data.url, '_blank');
-
-        // Show instructions
-        document.getElementById('auth-instructions').classList.remove('hidden');
-
-        console.log('Login started at:', new Date().toISOString());
     } catch (err) {
         alert('Failed to start login: ' + err.message);
     }

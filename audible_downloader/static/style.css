@@ -103,10 +103,44 @@ h2 {
 }
 
 /* Auth Section */
+.auth-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.auth-step {
+    display: flex;
+    gap: 15px;
+    padding: 20px;
+    background: #16213e;
+    border-radius: 8px;
+}
+
+.step-number {
+    width: 32px;
+    height: 32px;
+    background: #ff6b35;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.step-content {
+    flex: 1;
+}
+
+.step-content p {
+    margin-bottom: 10px;
+}
+
 .auth-form {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 10px;
     max-width: 400px;
 }
 
@@ -115,20 +149,17 @@ h2 {
     padding: 12px;
     border-radius: 5px;
     border: 1px solid #333;
-    background: #16213e;
+    background: #1a1a2e;
     color: #fff;
     font-size: 14px;
 }
 
-#auth-instructions {
-    margin-top: 20px;
-    padding: 20px;
-    background: #16213e;
-    border-radius: 8px;
-}
-
-#auth-instructions p {
-    margin-bottom: 10px;
+.auth-screenshot {
+    display: block;
+    max-width: 100%;
+    margin-top: 10px;
+    border-radius: 5px;
+    border: 1px solid #333;
 }
 
 #callback-url {
