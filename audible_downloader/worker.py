@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import audible
@@ -324,7 +326,10 @@ class ConvertWorker:
 
         if chapters:
             total_chapters = len(chapters)
-            for i, chapter in enumerate(chapters, 1):
+            completed = [0]  # Use list to allow mutation in nested function
+            lock = threading.Lock()
+
+            def convert_chapter(i, chapter):
                 chapter_title = chapter.get("title", f"Chapter {i}")
                 safe_title = _safe_filename(chapter_title)
 
@@ -335,7 +340,7 @@ class ConvertWorker:
 
                 output_file = mp3_dir / f"{i:03d} - {safe_title}.mp3"
                 if output_file.exists():
-                    continue
+                    return i  # Already done
 
                 cmd = [
                     "ffmpeg", "-v", "error",
@@ -352,11 +357,24 @@ class ConvertWorker:
                     "-y", str(output_file)
                 ]
                 subprocess.run(cmd, check=True)
+                return i
 
-                # Update progress (50-95 range for conversion)
-                pct = 50 + int((i / total_chapters) * 45)
-                detail = f"Chapter {i} / {total_chapters}"
-                db.update_job_stage(job_id, db.JobStage.CONVERTING, progress=pct, progress_detail=detail)
+            # Use CPU count for parallelism, default to 4
+            max_workers = os.cpu_count() or 4
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(convert_chapter, i, chapter): i
+                    for i, chapter in enumerate(chapters, 1)
+                }
+
+                for future in as_completed(futures):
+                    chapter_num = future.result()  # Raises if conversion failed
+                    with lock:
+                        completed[0] += 1
+                        pct = 50 + int((completed[0] / total_chapters) * 45)
+                        detail = f"Chapter {completed[0]} / {total_chapters}"
+                        db.update_job_stage(job_id, db.JobStage.CONVERTING, progress=pct, progress_detail=detail)
         else:
             output_file = mp3_dir / "audiobook.mp3"
             cmd = [
