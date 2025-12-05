@@ -258,12 +258,20 @@ h2 {
     background: #333;
 }
 
-.job-status.pending {
+.job-status.pending_download {
     background: #f39c12;
     color: #000;
 }
 
-.job-status.running {
+.job-status.downloading {
+    background: #3498db;
+}
+
+.job-status.pending_convert {
+    background: #9b59b6;
+}
+
+.job-status.converting {
     background: #3498db;
 }
 
@@ -293,6 +301,12 @@ h2 {
     height: 100%;
     background: #ff6b35;
     transition: width 0.3s;
+}
+
+.progress-detail {
+    font-size: 11px;
+    color: #888;
+    min-width: 100px;
 }
 
 /* Downloads List */

@@ -1,4 +1,4 @@
-"""Background worker for processing download jobs."""
+"""Background workers for processing download and convert jobs."""
 
 import asyncio
 import json
@@ -19,77 +19,89 @@ from . import db
 DOWNLOADS_DIR = Path("data/downloads")
 
 
-class Worker:
-    """Background worker that processes download jobs."""
+def cleanup_orphaned_directories():
+    """Remove download directories that don't have corresponding books in the database."""
+    if not DOWNLOADS_DIR.exists():
+        return
+
+    known_paths = db.get_all_book_paths()
+    removed = 0
+
+    for user_dir in DOWNLOADS_DIR.iterdir():
+        if not user_dir.is_dir():
+            continue
+        for book_dir in user_dir.iterdir():
+            if not book_dir.is_dir():
+                continue
+            if str(book_dir) not in known_paths:
+                print(f"Removing orphaned directory: {book_dir}")
+                shutil.rmtree(book_dir)
+                removed += 1
+
+    if removed:
+        print(f"Cleaned up {removed} orphaned directories")
+
+
+class DownloadWorker:
+    """Worker that downloads audiobooks from Audible."""
 
     def __init__(self):
         self._running = False
         self._thread = None
 
     def start(self):
-        """Start the worker thread."""
         if self._running:
             return
-
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):
-        """Stop the worker thread."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
 
     def _run(self):
-        """Main worker loop."""
         while self._running:
             try:
-                job = db.get_pending_job()
+                job = db.get_job_by_stage(db.JobStage.PENDING_DOWNLOAD)
                 if job:
                     self._process_job(job)
                 else:
-                    time.sleep(2)  # Poll every 2 seconds
+                    time.sleep(2)
             except Exception as e:
-                print(f"Worker error: {e}")
+                print(f"Download worker error: {e}")
                 time.sleep(5)
 
     def _process_job(self, job: db.Job):
-        """Process a single job."""
-        print(f"Processing job {job.id}: {job.title}")
-
-        db.update_job_status(job.id, db.JobStatus.RUNNING, progress=0)
+        print(f"Downloading job {job.id}: {job.title}")
+        db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=0)
 
         try:
-            # Get user and auth
             user = db.get_user_by_id(job.user_id)
             if not user:
                 raise Exception("User not found")
 
-            # Run async download in sync context
-            asyncio.run(self._download_and_convert(job, user))
+            asyncio.run(self._download(job, user))
 
-            db.update_job_status(job.id, db.JobStatus.COMPLETED, progress=100)
-            print(f"Job {job.id} completed")
+            # Move to convert queue
+            db.update_job_stage(job.id, db.JobStage.PENDING_CONVERT, progress=50)
+            print(f"Job {job.id} downloaded, queued for conversion")
 
         except Exception as e:
-            print(f"Job {job.id} failed: {e}")
-            db.update_job_status(job.id, db.JobStatus.FAILED, error=str(e))
+            print(f"Job {job.id} download failed: {e}")
+            db.update_job_stage(job.id, db.JobStage.FAILED, error=str(e))
 
-    async def _download_and_convert(self, job: db.Job, user: db.User):
-        """Download and convert a book."""
-        # Create auth from stored data
+    async def _download(self, job: db.Job, user: db.User):
         auth = audible.Authenticator.from_dict(user.auth_data)
 
-        # Create user download directory
         user_dir = DOWNLOADS_DIR / user.email
-        book_dir = user_dir / self._safe_filename(job.title)
+        book_dir = user_dir / _safe_filename(job.title)
         book_dir.mkdir(parents=True, exist_ok=True)
 
-        db.update_job_status(job.id, db.JobStatus.RUNNING, progress=10)
+        db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=5)
 
         async with audible.AsyncClient(auth=auth) as client:
-            # Fetch library to get book item
             library = await Library.from_api_full_sync(api_client=client)
 
             item = None
@@ -101,10 +113,9 @@ class Worker:
             if not item:
                 raise Exception(f"Book {job.asin} not found in library")
 
-            # Rebind to client
             item._client = client
 
-            db.update_job_status(job.id, db.JobStatus.RUNNING, progress=20)
+            db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=10)
 
             # Get download URL (AAXC first, then AAX)
             is_aaxc = False
@@ -112,7 +123,6 @@ class Worker:
                 url, codec, license_resp = await item.get_aaxc_url(quality="best")
                 is_aaxc = True
 
-                # Save voucher
                 voucher_file = book_dir / "voucher.json"
                 with open(voucher_file, "w") as f:
                     json.dump(license_resp, f, indent=2)
@@ -120,13 +130,12 @@ class Worker:
             except Exception:
                 url, codec = await item.get_aax_url(quality="best")
 
-            db.update_job_status(job.id, db.JobStatus.RUNNING, progress=30)
+            db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=15)
 
             # Download audio file
             ext = "aaxc" if is_aaxc else "aax"
             audio_file = book_dir / f"audio.{ext}"
 
-            # User-Agent required by Audible CDN
             download_headers = {"User-Agent": "Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0"}
 
             if not audio_file.exists():
@@ -142,10 +151,13 @@ class Worker:
                                 f.write(chunk)
                                 downloaded += len(chunk)
                                 if total > 0:
-                                    pct = 30 + int((downloaded / total) * 40)
-                                    db.update_job_status(job.id, db.JobStatus.RUNNING, progress=pct)
+                                    pct = 15 + int((downloaded / total) * 30)
+                                    mb_down = downloaded / (1024 * 1024)
+                                    mb_total = total / (1024 * 1024)
+                                    detail = f"{mb_down:.1f} / {mb_total:.1f} MB"
+                                    db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=pct, progress_detail=detail)
 
-            db.update_job_status(job.id, db.JobStatus.RUNNING, progress=70)
+            db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=45)
 
             # Get chapter info
             try:
@@ -156,7 +168,7 @@ class Worker:
                     with open(chapters_file, "w") as f:
                         json.dump(chapter_info, f, indent=2)
             except Exception:
-                chapter_info = {}
+                pass
 
             # Download cover
             cover_url = item.get_cover_url(res=500)
@@ -170,28 +182,94 @@ class Worker:
                     except Exception:
                         pass
 
-        db.update_job_status(job.id, db.JobStatus.RUNNING, progress=75)
+            # Save metadata for convert worker
+            meta_file = book_dir / "meta.json"
+            authors = ", ".join(a["name"] for a in (item.authors or []))
+            with open(meta_file, "w") as f:
+                json.dump({
+                    "asin": job.asin,
+                    "title": job.title,
+                    "authors": authors,
+                    "is_aaxc": is_aaxc,
+                    "audio_file": str(audio_file),
+                    "book_dir": str(book_dir),
+                }, f)
 
-        # Convert to MP3
-        self._convert_to_mp3(book_dir, audio_file, is_aaxc, user.auth_data)
 
-        db.update_job_status(job.id, db.JobStatus.RUNNING, progress=95)
+class ConvertWorker:
+    """Worker that converts downloaded audiobooks to MP3."""
 
-        # Create zip file
-        self._create_zip(book_dir)
+    def __init__(self):
+        self._running = False
+        self._thread = None
 
-        # Extract author from item
-        authors = ", ".join(a["name"] for a in (item.authors or []))
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
-        # Save book to database
-        db.save_book(user.id, job.asin, job.title, authors, str(book_dir))
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5)
 
-    def _safe_filename(self, name: str) -> str:
-        """Create a safe filename from a string."""
-        return "".join(c for c in name if c.isalnum() or c in " -_").strip()[:100]
+    def _run(self):
+        while self._running:
+            try:
+                job = db.get_job_by_stage(db.JobStage.PENDING_CONVERT)
+                if job:
+                    self._process_job(job)
+                else:
+                    time.sleep(2)
+            except Exception as e:
+                print(f"Convert worker error: {e}")
+                time.sleep(5)
 
-    def _convert_to_mp3(self, book_dir: Path, audio_file: Path, is_aaxc: bool, auth_data: dict):
-        """Convert audio to MP3 chapters."""
+    def _process_job(self, job: db.Job):
+        print(f"Converting job {job.id}: {job.title}")
+        db.update_job_stage(job.id, db.JobStage.CONVERTING, progress=50)
+
+        try:
+            user = db.get_user_by_id(job.user_id)
+            if not user:
+                raise Exception("User not found")
+
+            user_dir = DOWNLOADS_DIR / user.email
+            book_dir = user_dir / _safe_filename(job.title)
+
+            # Load metadata
+            meta_file = book_dir / "meta.json"
+            if not meta_file.exists():
+                raise Exception("Metadata file not found")
+
+            with open(meta_file) as f:
+                meta = json.load(f)
+
+            audio_file = Path(meta["audio_file"])
+            is_aaxc = meta["is_aaxc"]
+            authors = meta["authors"]
+
+            # Convert to MP3
+            self._convert_to_mp3(job.id, book_dir, audio_file, is_aaxc, user.auth_data)
+
+            db.update_job_stage(job.id, db.JobStage.CONVERTING, progress=95)
+
+            # Create zip
+            self._create_zip(book_dir)
+
+            # Save to database
+            db.save_book(user.id, job.asin, job.title, authors, str(book_dir))
+
+            db.update_job_stage(job.id, db.JobStage.COMPLETED, progress=100)
+            print(f"Job {job.id} completed")
+
+        except Exception as e:
+            print(f"Job {job.id} convert failed: {e}")
+            db.update_job_stage(job.id, db.JobStage.FAILED, error=str(e))
+
+    def _convert_to_mp3(self, job_id: int, book_dir: Path, audio_file: Path, is_aaxc: bool, auth_data: dict):
         mp3_dir = book_dir / "mp3"
         mp3_dir.mkdir(exist_ok=True)
 
@@ -210,7 +288,6 @@ class Worker:
             else:
                 raise Exception("Missing voucher file")
         else:
-            # Get activation bytes from auth
             auth = audible.Authenticator.from_dict(auth_data)
             try:
                 ab = auth.get_activation_bytes()
@@ -246,9 +323,10 @@ class Worker:
         album = tags.get("album", "")
 
         if chapters:
+            total_chapters = len(chapters)
             for i, chapter in enumerate(chapters, 1):
                 chapter_title = chapter.get("title", f"Chapter {i}")
-                safe_title = self._safe_filename(chapter_title)
+                safe_title = _safe_filename(chapter_title)
 
                 start_ms = chapter.get("start_offset_ms", 0)
                 length_ms = chapter.get("length_ms", 0)
@@ -270,12 +348,16 @@ class Worker:
                     "-metadata", f"title={chapter_title}",
                     "-metadata", f"artist={artist}",
                     "-metadata", f"album={album}",
-                    "-metadata", f"track={i}/{len(chapters)}",
+                    "-metadata", f"track={i}/{total_chapters}",
                     "-y", str(output_file)
                 ]
                 subprocess.run(cmd, check=True)
+
+                # Update progress (50-95 range for conversion)
+                pct = 50 + int((i / total_chapters) * 45)
+                detail = f"Chapter {i} / {total_chapters}"
+                db.update_job_stage(job_id, db.JobStage.CONVERTING, progress=pct, progress_detail=detail)
         else:
-            # Single file
             output_file = mp3_dir / "audiobook.mp3"
             cmd = [
                 "ffmpeg", "-v", "error",
@@ -287,7 +369,6 @@ class Worker:
             subprocess.run(cmd, check=True)
 
     def _create_zip(self, book_dir: Path):
-        """Create a zip file of the MP3 directory."""
         mp3_dir = book_dir / "mp3"
         zip_file = book_dir / "audiobook.zip"
 
@@ -299,10 +380,36 @@ class Worker:
                 if file.is_file():
                     zf.write(file, file.name)
 
-            # Include cover if exists
             cover = book_dir / "cover.jpg"
             if cover.exists():
                 zf.write(cover, "cover.jpg")
+
+
+def _safe_filename(name: str) -> str:
+    """Create a safe filename from a string."""
+    return "".join(c for c in name if c.isalnum() or c in " -_").strip()[:100]
+
+
+class Worker:
+    """Combined worker manager for download and convert workers."""
+
+    def __init__(self):
+        self.download_worker = DownloadWorker()
+        self.convert_worker = ConvertWorker()
+
+    def start(self):
+        # Clean up orphaned directories on startup
+        try:
+            cleanup_orphaned_directories()
+        except Exception as e:
+            print(f"Cleanup failed: {e}")
+
+        self.download_worker.start()
+        self.convert_worker.start()
+
+    def stop(self):
+        self.download_worker.stop()
+        self.convert_worker.stop()
 
 
 # Global worker instance

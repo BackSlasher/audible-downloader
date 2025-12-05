@@ -337,7 +337,9 @@ async def get_jobs(request: Request):
                 "asin": j.asin,
                 "title": j.title,
                 "status": j.status.value,
+                "stage": j.stage.value,
                 "progress": j.progress,
+                "progress_detail": j.progress_detail,
                 "error": j.error,
                 "created_at": j.created_at.isoformat() if j.created_at else None,
                 "completed_at": j.completed_at.isoformat() if j.completed_at else None

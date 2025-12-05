@@ -3,6 +3,7 @@ let currentUser = null;
 let library = [];
 let selectedBooks = new Set();
 let jobsInterval = null;
+let previousCompletedAsins = new Set();
 
 // DOM Elements
 const authSection = document.getElementById('auth-section');
@@ -201,6 +202,10 @@ function updateDownloadButton() {
 async function downloadSelected() {
     if (selectedBooks.size === 0) return;
 
+    const btn = document.getElementById('download-selected-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
     try {
         const res = await fetch('/api/download', {
             method: 'POST',
@@ -222,6 +227,7 @@ async function downloadSelected() {
 
     } catch (err) {
         alert('Failed to start download: ' + err.message);
+        updateDownloadButton();
     }
 }
 
@@ -231,9 +237,35 @@ async function loadJobs() {
         const res = await fetch('/api/jobs');
         const data = await res.json();
         renderJobs(data.jobs);
+
+        // Check for newly completed jobs and refresh library
+        const currentCompletedAsins = new Set(
+            data.jobs.filter(j => j.stage === 'completed').map(j => j.asin)
+        );
+        for (const asin of currentCompletedAsins) {
+            if (!previousCompletedAsins.has(asin)) {
+                // New completion - refresh library to update downloaded status
+                const filterValue = document.getElementById('library-filter')?.value || '';
+                loadLibrary(false).then(() => renderLibrary(filterValue));
+                break;
+            }
+        }
+        previousCompletedAsins = currentCompletedAsins;
     } catch (err) {
         console.error('Failed to load jobs:', err);
     }
+}
+
+function getStageLabel(stage) {
+    const labels = {
+        'pending_download': 'Queued',
+        'downloading': 'Downloading',
+        'pending_convert': 'Waiting to convert',
+        'converting': 'Converting',
+        'completed': 'Completed',
+        'failed': 'Failed'
+    };
+    return labels[stage] || stage;
 }
 
 function renderJobs(jobs) {
@@ -242,24 +274,31 @@ function renderJobs(jobs) {
         return;
     }
 
-    jobsList.innerHTML = jobs.map(job => `
-        <div class="job-item">
-            <div class="job-info">
-                <div class="job-title">${escapeHtml(job.title)}</div>
-                <span class="job-status ${job.status}">${job.status}</span>
-                ${job.error ? `<div style="color: #c0392b; font-size: 12px; margin-top: 5px;">${escapeHtml(job.error)}</div>` : ''}
+    jobsList.innerHTML = jobs.map(job => {
+        const tooltip = job.progress_detail
+            ? `${getStageLabel(job.stage)}: ${job.progress_detail}`
+            : `${getStageLabel(job.stage)} (${job.progress}%)`;
+
+        return `
+            <div class="job-item">
+                <div class="job-info">
+                    <div class="job-title">${escapeHtml(job.title)}</div>
+                    <span class="job-status ${job.stage}">${getStageLabel(job.stage)}</span>
+                    ${job.error ? `<div style="color: #c0392b; font-size: 12px; margin-top: 5px;">${escapeHtml(job.error)}</div>` : ''}
+                </div>
+                <div class="job-actions">
+                    ${job.stage === 'downloading' || job.stage === 'converting' ? `
+                        <div class="progress-bar" title="${escapeHtml(tooltip)}">
+                            <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
+                        </div>
+                        <span class="progress-detail">${escapeHtml(job.progress_detail || '')}</span>
+                    ` : `
+                        <button class="btn danger small" onclick="deleteJob(${job.id})">Delete</button>
+                    `}
+                </div>
             </div>
-            <div class="job-actions">
-                ${job.status === 'running' ? `
-                    <div class="progress-bar">
-                        <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
-                    </div>
-                ` : `
-                    <button class="btn danger small" onclick="deleteJob(${job.id})">Delete</button>
-                `}
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 async function deleteJob(jobId) {

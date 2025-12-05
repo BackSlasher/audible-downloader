@@ -19,6 +19,15 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+class JobStage(str, Enum):
+    PENDING_DOWNLOAD = "pending_download"
+    DOWNLOADING = "downloading"
+    PENDING_CONVERT = "pending_convert"
+    CONVERTING = "converting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 @dataclass
 class User:
     id: int
@@ -45,7 +54,9 @@ class Job:
     asin: str
     title: str
     status: JobStatus
+    stage: JobStage
     progress: int
+    progress_detail: Optional[str]
     error: Optional[str]
     created_at: datetime
     completed_at: Optional[datetime]
@@ -82,7 +93,9 @@ def init_db():
                 asin TEXT NOT NULL,
                 title TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
+                stage TEXT DEFAULT 'pending_download',
                 progress INTEGER DEFAULT 0,
+                progress_detail TEXT,
                 error TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
@@ -230,8 +243,8 @@ def create_job(user_id: int, asin: str, title: str) -> Job:
     """Create a new download job."""
     with get_db() as conn:
         cursor = conn.execute(
-            "INSERT INTO jobs (user_id, asin, title, status) VALUES (?, ?, ?, ?)",
-            (user_id, asin, title, JobStatus.PENDING.value)
+            "INSERT INTO jobs (user_id, asin, title, status, stage) VALUES (?, ?, ?, ?, ?)",
+            (user_id, asin, title, JobStatus.PENDING.value, JobStage.PENDING_DOWNLOAD.value)
         )
         return Job(
             id=cursor.lastrowid,
@@ -239,7 +252,9 @@ def create_job(user_id: int, asin: str, title: str) -> Job:
             asin=asin,
             title=title,
             status=JobStatus.PENDING,
+            stage=JobStage.PENDING_DOWNLOAD,
             progress=0,
+            progress_detail=None,
             error=None,
             created_at=datetime.now(),
             completed_at=None
@@ -247,26 +262,38 @@ def create_job(user_id: int, asin: str, title: str) -> Job:
 
 
 def get_pending_job() -> Optional[Job]:
-    """Get the next pending job."""
+    """Get the next pending job (legacy, for backwards compat)."""
+    return get_job_by_stage(JobStage.PENDING_DOWNLOAD)
+
+
+def get_job_by_stage(stage: JobStage) -> Optional[Job]:
+    """Get the next job at a specific stage."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT 1",
-            (JobStatus.PENDING.value,)
+            "SELECT * FROM jobs WHERE stage = ? ORDER BY created_at ASC LIMIT 1",
+            (stage.value,)
         ).fetchone()
 
         if row:
-            return Job(
-                id=row["id"],
-                user_id=row["user_id"],
-                asin=row["asin"],
-                title=row["title"],
-                status=JobStatus(row["status"]),
-                progress=row["progress"],
-                error=row["error"],
-                created_at=row["created_at"],
-                completed_at=row["completed_at"]
-            )
+            return _row_to_job(row)
     return None
+
+
+def _row_to_job(row) -> Job:
+    """Convert a database row to a Job object."""
+    return Job(
+        id=row["id"],
+        user_id=row["user_id"],
+        asin=row["asin"],
+        title=row["title"],
+        status=JobStatus(row["status"]),
+        stage=JobStage(row["stage"]) if row["stage"] else JobStage.PENDING_DOWNLOAD,
+        progress=row["progress"],
+        progress_detail=row["progress_detail"] if "progress_detail" in row.keys() else None,
+        error=row["error"],
+        created_at=row["created_at"],
+        completed_at=row["completed_at"]
+    )
 
 
 def get_user_jobs(user_id: int) -> list[Job]:
@@ -277,24 +304,11 @@ def get_user_jobs(user_id: int) -> list[Job]:
             (user_id,)
         ).fetchall()
 
-        return [
-            Job(
-                id=row["id"],
-                user_id=row["user_id"],
-                asin=row["asin"],
-                title=row["title"],
-                status=JobStatus(row["status"]),
-                progress=row["progress"],
-                error=row["error"],
-                created_at=row["created_at"],
-                completed_at=row["completed_at"]
-            )
-            for row in rows
-        ]
+        return [_row_to_job(row) for row in rows]
 
 
 def update_job_status(job_id: int, status: JobStatus, progress: int = None, error: str = None):
-    """Update job status."""
+    """Update job status (legacy)."""
     with get_db() as conn:
         if status == JobStatus.COMPLETED or status == JobStatus.FAILED:
             conn.execute(
@@ -308,6 +322,27 @@ def update_job_status(job_id: int, status: JobStatus, progress: int = None, erro
             )
 
 
+def update_job_stage(job_id: int, stage: JobStage, progress: int = 0, error: str = None, progress_detail: str = None):
+    """Update job stage and progress."""
+    with get_db() as conn:
+        if stage == JobStage.COMPLETED:
+            conn.execute(
+                "UPDATE jobs SET status = ?, stage = ?, progress = ?, error = ?, progress_detail = ?, completed_at = ? WHERE id = ?",
+                (JobStatus.COMPLETED.value, stage.value, 100, error, None, datetime.now(), job_id)
+            )
+        elif stage == JobStage.FAILED:
+            conn.execute(
+                "UPDATE jobs SET status = ?, stage = ?, progress = ?, error = ?, progress_detail = ?, completed_at = ? WHERE id = ?",
+                (JobStatus.FAILED.value, stage.value, progress, error, None, datetime.now(), job_id)
+            )
+        else:
+            status = JobStatus.RUNNING if stage in (JobStage.DOWNLOADING, JobStage.CONVERTING) else JobStatus.PENDING
+            conn.execute(
+                "UPDATE jobs SET status = ?, stage = ?, progress = ?, error = ?, progress_detail = ? WHERE id = ?",
+                (status.value, stage.value, progress, error, progress_detail, job_id)
+            )
+
+
 def get_job(job_id: int) -> Optional[Job]:
     """Get a job by ID."""
     with get_db() as conn:
@@ -316,17 +351,7 @@ def get_job(job_id: int) -> Optional[Job]:
         ).fetchone()
 
         if row:
-            return Job(
-                id=row["id"],
-                user_id=row["user_id"],
-                asin=row["asin"],
-                title=row["title"],
-                status=JobStatus(row["status"]),
-                progress=row["progress"],
-                error=row["error"],
-                created_at=row["created_at"],
-                completed_at=row["completed_at"]
-            )
+            return _row_to_job(row)
     return None
 
 
@@ -381,3 +406,10 @@ def save_library_cache(user_id: int, library: list):
                ON CONFLICT(user_id) DO UPDATE SET library_json = ?, cached_at = CURRENT_TIMESTAMP""",
             (user_id, json.dumps(library), json.dumps(library))
         )
+
+
+def get_all_book_paths() -> set[str]:
+    """Get all book paths from the database."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT path FROM books WHERE path IS NOT NULL").fetchall()
+        return {row["path"] for row in rows}
