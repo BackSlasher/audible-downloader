@@ -21,10 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupEventListeners() {
-    document.getElementById('login-btn').addEventListener('click', startLogin);
-    document.getElementById('complete-auth-btn').addEventListener('click', completeLogin);
-    document.getElementById('refresh-btn').addEventListener('click', loadLibrary);
-    document.getElementById('download-selected-btn').addEventListener('click', downloadSelected);
+    document.getElementById('login-btn')?.addEventListener('click', startLogin);
+    document.getElementById('complete-auth-btn')?.addEventListener('click', completeLogin);
+    document.getElementById('refresh-btn')?.addEventListener('click', () => loadLibrary(true));
+    document.getElementById('download-selected-btn')?.addEventListener('click', downloadSelected);
+    document.getElementById('library-filter')?.addEventListener('input', (e) => renderLibrary(e.target.value));
 }
 
 // Auth
@@ -130,26 +131,32 @@ async function logout() {
 }
 
 // Library
-async function loadLibrary() {
+async function loadLibrary(refresh = false) {
     libraryGrid.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading library...</p></div>';
 
     try {
-        const res = await fetch('/api/library');
+        const url = refresh ? '/api/library?refresh=true' : '/api/library';
+        const res = await fetch(url);
         const data = await res.json();
         library = data.books;
-        renderLibrary();
+        const filterValue = document.getElementById('library-filter')?.value || '';
+        renderLibrary(filterValue);
     } catch (err) {
         libraryGrid.innerHTML = '<div class="loading">Failed to load library</div>';
         console.error('Failed to load library:', err);
     }
 }
 
-function renderLibrary() {
-    selectedBooks.clear();
-    updateDownloadButton();
+function renderLibrary(filter = '') {
+    const filterLower = filter.toLowerCase();
+    const filteredBooks = filter
+        ? library.filter(book =>
+            (book.title || '').toLowerCase().includes(filterLower) ||
+            (book.author || '').toLowerCase().includes(filterLower))
+        : library;
 
-    libraryGrid.innerHTML = library.map(book => `
-        <div class="book-card ${book.downloaded ? 'downloaded' : ''}"
+    libraryGrid.innerHTML = filteredBooks.map(book => `
+        <div class="book-card ${book.downloaded ? 'downloaded' : ''} ${selectedBooks.has(book.asin) ? 'selected' : ''}"
              data-asin="${book.asin}"
              onclick="toggleBook('${book.asin}')">
             <img class="book-cover" src="${book.cover || ''}" alt="" onerror="this.style.display='none'">
@@ -160,6 +167,10 @@ function renderLibrary() {
             </div>
         </div>
     `).join('');
+
+    if (filteredBooks.length === 0 && filter) {
+        libraryGrid.innerHTML = '<div class="loading">No books match your filter</div>';
+    }
 }
 
 function toggleBook(asin) {

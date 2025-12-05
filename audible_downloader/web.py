@@ -233,20 +233,32 @@ async def logout(request: Request):
 
 
 @app.get("/api/library")
-async def get_library(request: Request):
-    """Fetch user's Audible library."""
+async def get_library(request: Request, refresh: bool = False):
+    """Fetch user's Audible library. Uses cache unless refresh=true."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(401, "Not authenticated")
 
+    # Get existing downloaded books for this user
+    existing_books = {b.asin: b for b in db.get_user_books(user.id)}
+
+    # Check cache first (unless refresh requested)
+    if not refresh:
+        cached = db.get_library_cache(user.id)
+        if cached is not None:
+            # Update downloaded status from current DB state
+            for book in cached:
+                existing = existing_books.get(book["asin"])
+                book["downloaded"] = existing is not None
+                book["path"] = existing.path if existing else None
+            return {"books": cached}
+
+    # Fetch from Audible API
     try:
         auth = audible.Authenticator.from_dict(user.auth_data)
 
         async with audible.AsyncClient(auth=auth) as client:
             library = await Library.from_api_full_sync(api_client=client)
-
-        # Get existing books for this user
-        existing_books = {b.asin: b for b in db.get_user_books(user.id)}
 
         books = []
         for item in library:
@@ -265,6 +277,9 @@ async def get_library(request: Request):
                 "downloaded": existing is not None,
                 "path": existing.path if existing else None
             })
+
+        # Save to cache
+        db.save_library_cache(user.id, books)
 
         return {"books": books}
 

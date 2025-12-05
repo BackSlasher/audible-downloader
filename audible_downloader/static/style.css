@@ -136,6 +136,22 @@ h2 {
     margin-bottom: 10px;
 }
 
+/* Library Filter */
+#library-filter {
+    padding-left: 10px;
+    border-radius: 5px;
+    border: 1px solid #333;
+    background: #16213e;
+    color: #fff;
+    font-size: 14px;
+    width: 180px;
+}
+
+#library-filter:focus {
+    outline: none;
+    border-color: #ff6b35;
+}
+
 /* Book Grid */
 .book-grid {
     display: grid;

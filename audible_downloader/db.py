@@ -92,6 +92,13 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
             CREATE INDEX IF NOT EXISTS idx_books_user ON books(user_id);
+
+            CREATE TABLE IF NOT EXISTS library_cache (
+                user_id INTEGER PRIMARY KEY,
+                library_json TEXT NOT NULL,
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
         """)
 
 
@@ -348,3 +355,29 @@ def delete_book(book_id: int, user_id: int) -> Optional[str]:
             )
             return row["path"]
     return None
+
+
+# Library cache operations
+
+def get_library_cache(user_id: int) -> Optional[list]:
+    """Get cached library for a user. Returns None if not cached."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT library_json FROM library_cache WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+
+        if row:
+            return json.loads(row["library_json"])
+    return None
+
+
+def save_library_cache(user_id: int, library: list):
+    """Save library cache for a user."""
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO library_cache (user_id, library_json, cached_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET library_json = ?, cached_at = CURRENT_TIMESTAMP""",
+            (user_id, json.dumps(library), json.dumps(library))
+        )
