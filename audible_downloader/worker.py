@@ -295,13 +295,13 @@ class ConvertWorker:
                 raise Exception("Could not get activation bytes")
             decrypt_params = ["-activation_bytes", ab]
 
-        # Get chapters
+        # Get chapters (flatten nested structure)
         chapters_file = book_dir / "chapters.json"
         chapters = []
         if chapters_file.exists():
             with open(chapters_file) as f:
                 data = json.load(f)
-                chapters = data.get("chapters", [])
+                chapters = _flatten_chapters(data.get("chapters", []))
 
         # Probe for metadata
         probe_cmd = [
@@ -404,6 +404,43 @@ class ConvertWorker:
 def _safe_filename(name: str) -> str:
     """Create a safe filename from a string."""
     return "".join(c for c in name if c.isalnum() or c in " -_").strip()[:100]
+
+
+def _flatten_chapters(chapters: list, parent_title: str = None) -> list:
+    """Flatten nested chapter structure into a single list."""
+    result = []
+    for chapter in chapters:
+        title = chapter.get("title", "")
+        # Prepend parent title if exists
+        if parent_title:
+            full_title = f"{parent_title} - {title}"
+        else:
+            full_title = title
+
+        if "chapters" in chapter and chapter["chapters"]:
+            # Check if parent has intro content before first child
+            parent_start = chapter.get("start_offset_ms", 0)
+            first_child_start = chapter["chapters"][0].get("start_offset_ms", 0)
+            intro_length = first_child_start - parent_start
+
+            # If there's intro content (more than 100ms), add it as a chapter
+            if intro_length > 100:
+                intro_chapter = {
+                    "title": full_title,
+                    "start_offset_ms": parent_start,
+                    "length_ms": intro_length,
+                }
+                result.append(intro_chapter)
+
+            # Recursively flatten children with parent title
+            result.extend(_flatten_chapters(chapter["chapters"], full_title))
+        else:
+            # Leaf chapter - add with full title
+            result.append({
+                **chapter,
+                "title": full_title,
+            })
+    return result
 
 
 class Worker:
