@@ -102,6 +102,12 @@ async def index(request: Request):
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/tinder", response_class=HTMLResponse)
+async def tinder(request: Request):
+    """Serve book tinder page."""
+    return FileResponse(STATIC_DIR / "tinder.html")
+
+
 @app.get("/api/me")
 async def get_me(request: Request):
     """Get current user info."""
@@ -232,9 +238,15 @@ async def logout(request: Request):
     return response
 
 
+def clean_html(text):
+    """Strip HTML tags from text."""
+    import re
+    return re.sub(r'<[^>]+>', '', text or '')
+
+
 @app.get("/api/library")
-async def get_library(request: Request, refresh: bool = False):
-    """Fetch user's Audible library. Uses cache unless refresh=true."""
+async def get_library(request: Request, refresh: bool = False, full: bool = False):
+    """Fetch user's Audible library. Uses cache unless refresh=true. full=true includes series/summary."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(401, "Not authenticated")
@@ -243,7 +255,8 @@ async def get_library(request: Request, refresh: bool = False):
     existing_books = {b.asin: b for b in db.get_user_books(user.id)}
 
     # Check cache first (unless refresh requested)
-    if not refresh:
+    # Note: cache doesn't store full data, so skip cache if full=true
+    if not refresh and not full:
         cached = db.get_library_cache(user.id)
         if cached is not None:
             # Update downloaded status from current DB state
@@ -268,7 +281,7 @@ async def get_library(request: Request, refresh: bool = False):
 
             existing = existing_books.get(item.asin)
 
-            books.append({
+            book_data = {
                 "asin": item.asin,
                 "title": item.full_title,
                 "author": authors,
@@ -276,10 +289,21 @@ async def get_library(request: Request, refresh: bool = False):
                 "cover": item.get_cover_url(res=500),
                 "downloaded": existing is not None,
                 "path": existing.path if existing else None
-            })
+            }
 
-        # Save to cache
-        db.save_library_cache(user.id, books)
+            # Add extended data for tinder mode
+            if full:
+                d = item._data
+                series_list = d.get('series') or []
+                book_data["series"] = series_list[0]['title'] if series_list else None
+                book_data["series_num"] = series_list[0].get('sequence') if series_list else None
+                book_data["summary"] = clean_html(d.get('merchandising_summary') or d.get('publisher_summary') or '')
+
+            books.append(book_data)
+
+        # Save to cache (without full data)
+        if not full:
+            db.save_library_cache(user.id, books)
 
         return {"books": books}
 

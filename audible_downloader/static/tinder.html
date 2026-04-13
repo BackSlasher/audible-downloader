@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Tinder - Audible Downloader</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/tinder.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Book Tinder</h1>
+            <div id="user-info"></div>
+        </header>
+
+        <main>
+            <!-- Auth Section -->
+            <section id="auth-section" class="hidden">
+                <p>Please <a href="/">login</a> first to use Book Tinder.</p>
+            </section>
+
+            <!-- Controls -->
+            <section id="controls-section" class="hidden">
+                <div class="tinder-controls">
+                    <div class="control-group">
+                        <button id="refresh-btn" class="btn">Refresh Library</button>
+                        <button id="restore-later-btn" class="btn">Restore Later</button>
+                        <button id="view-markings-btn" class="btn">View Markings</button>
+                    </div>
+                    <div class="stats" id="stats"></div>
+                </div>
+            </section>
+
+            <!-- Thumbnail Grid -->
+            <section id="grid-section" class="hidden">
+                <div id="book-grid" class="tinder-grid"></div>
+            </section>
+
+            <!-- Markings View -->
+            <section id="markings-section" class="hidden">
+                <div class="markings-header">
+                    <h2>All Markings</h2>
+                    <div class="markings-actions">
+                        <button id="export-keeps-btn" class="btn primary">Export Keeps</button>
+                        <button id="back-to-grid-btn" class="btn">Back to Grid</button>
+                    </div>
+                </div>
+                <div class="markings-filters">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="keep">Keep</button>
+                    <button class="filter-btn" data-filter="delete">Delete</button>
+                    <button class="filter-btn" data-filter="later">Later</button>
+                    <button class="filter-btn" data-filter="none">Undecided</button>
+                </div>
+                <div id="markings-list" class="markings-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <img id="modal-cover" class="modal-cover" src="" alt="">
+            <div class="modal-info">
+                <div id="modal-series" class="modal-series"></div>
+                <h2 id="modal-title"></h2>
+                <p id="modal-author" class="modal-author"></p>
+                <p id="modal-runtime" class="modal-runtime"></p>
+                <p id="modal-summary" class="modal-summary"></p>
+            </div>
+            <div class="modal-actions">
+                <button class="action-btn delete" data-action="delete" title="Delete (Left Arrow / Swipe Left)">
+                    <span class="action-icon">&#10005;</span>
+                    <span class="action-label">Delete</span>
+                </button>
+                <button class="action-btn later" data-action="later" title="Later (Down Arrow / Swipe Down)">
+                    <span class="action-icon">?</span>
+                    <span class="action-label">Later</span>
+                </button>
+                <button class="action-btn keep" data-action="keep" title="Keep (Right Arrow / Swipe Right)">
+                    <span class="action-icon">&#10084;</span>
+                    <span class="action-label">Keep</span>
+                </button>
+            </div>
+            <div class="swipe-hint">
+                <span>&larr; swipe left to delete</span>
+                <span>&darr; down for later</span>
+                <span>swipe right to keep &rarr;</span>
+            </div>
+            <button id="modal-close" class="modal-close">&times;</button>
+        </div>
+    </div>
+
+    <script src="/static/tinder.js"></script>
+</body>
+</html>

@@ -1,0 +1,560 @@
+/* Tinder-specific styles */
+
+.tinder-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.control-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.stats {
+    color: #888;
+    font-size: 14px;
+}
+
+.stats span {
+    margin-left: 15px;
+}
+
+.stats .keep { color: #27ae60; }
+.stats .delete { color: #c0392b; }
+.stats .later { color: #f39c12; }
+
+/* Tinder Grid - smaller thumbnails */
+.tinder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px;
+}
+
+.tinder-card {
+    background: #16213e;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+}
+
+.tinder-card:hover {
+    transform: scale(1.05);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+}
+
+.tinder-card img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+}
+
+.tinder-card .card-title {
+    padding: 8px;
+    font-size: 11px;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+.modal-content {
+    position: relative;
+    background: #16213e;
+    border-radius: 12px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-cover {
+    width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    background: #0f3460;
+}
+
+.modal-info {
+    padding: 20px;
+    flex: 1;
+}
+
+.modal-series {
+    display: inline-block;
+    background: #ff6b35;
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.modal-series:empty {
+    display: none;
+}
+
+.modal-info h2 {
+    color: #fff;
+    margin-bottom: 10px;
+    font-size: 1.4em;
+}
+
+.modal-author {
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.modal-runtime {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 15px;
+}
+
+.modal-summary {
+    color: #aaa;
+    font-size: 14px;
+    line-height: 1.6;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    padding: 20px;
+    border-top: 1px solid #333;
+}
+
+.action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 15px 30px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+    background: #333;
+    color: #fff;
+}
+
+.action-btn:hover {
+    transform: scale(1.1);
+}
+
+.action-icon {
+    font-size: 28px;
+}
+
+.action-label {
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.action-btn.keep {
+    background: #27ae60;
+}
+
+.action-btn.keep:hover {
+    background: #2ecc71;
+}
+
+.action-btn.delete {
+    background: #c0392b;
+}
+
+.action-btn.delete:hover {
+    background: #e74c3c;
+}
+
+.action-btn.later {
+    background: #f39c12;
+    color: #000;
+}
+
+.action-btn.later:hover {
+    background: #f1c40f;
+}
+
+.modal-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    color: #fff;
+    font-size: 24px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-close:hover {
+    background: rgba(0, 0, 0, 0.8);
+}
+
+/* Markings View */
+.markings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.markings-header h2 {
+    margin-bottom: 0;
+}
+
+.markings-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.markings-filters {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.filter-btn {
+    padding: 8px 16px;
+    border: 1px solid #333;
+    border-radius: 5px;
+    background: transparent;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-btn:hover {
+    border-color: #ff6b35;
+    color: #fff;
+}
+
+.filter-btn.active {
+    background: #ff6b35;
+    border-color: #ff6b35;
+    color: #fff;
+}
+
+.markings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.marking-item {
+    background: #16213e;
+    padding: 12px 15px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.marking-item img {
+    width: 50px;
+    height: 50px;
+    object-fit: cover;
+    border-radius: 4px;
+}
+
+.marking-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.marking-title {
+    font-weight: bold;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.marking-author {
+    color: #888;
+    font-size: 12px;
+}
+
+.marking-decision {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    min-width: 70px;
+    text-align: center;
+}
+
+.marking-decision.keep { background: #27ae60; }
+.marking-decision.delete { background: #c0392b; }
+.marking-decision.later { background: #f39c12; color: #000; }
+.marking-decision.none { background: #333; }
+
+.marking-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.marking-actions button {
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    background: #333;
+    color: #fff;
+}
+
+.marking-actions button:hover {
+    background: #444;
+}
+
+.marking-actions button.keep-btn:hover { background: #27ae60; }
+.marking-actions button.delete-btn:hover { background: #c0392b; }
+.marking-actions button.later-btn:hover { background: #f39c12; color: #000; }
+.marking-actions button.clear-btn:hover { background: #666; }
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #666;
+}
+
+.empty-state p {
+    margin-bottom: 20px;
+}
+
+/* Swipe hint - hidden on desktop, shown on touch devices */
+.swipe-hint {
+    display: none;
+    text-align: center;
+    padding: 10px;
+    color: #666;
+    font-size: 11px;
+    border-top: 1px solid #333;
+}
+
+.swipe-hint span {
+    margin: 0 8px;
+}
+
+@media (pointer: coarse) {
+    .swipe-hint {
+        display: block;
+    }
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .container {
+        padding: 10px;
+    }
+
+    header {
+        padding: 15px 0;
+        margin-bottom: 15px;
+    }
+
+    header h1 {
+        font-size: 1.4em;
+    }
+
+    .tinder-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .tinder-card {
+        border-radius: 4px;
+    }
+
+    .tinder-card .card-title {
+        padding: 6px;
+        font-size: 10px;
+    }
+
+    .modal-content {
+        width: 100%;
+        height: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .modal-cover {
+        max-height: 40vh;
+    }
+
+    .modal-info {
+        padding: 15px;
+    }
+
+    .modal-info h2 {
+        font-size: 1.2em;
+    }
+
+    .modal-summary {
+        font-size: 13px;
+        max-height: 100px;
+    }
+
+    .modal-actions {
+        gap: 15px;
+        padding: 15px;
+        position: sticky;
+        bottom: 0;
+        background: #16213e;
+    }
+
+    .action-btn {
+        padding: 15px 25px;
+        flex: 1;
+    }
+
+    .action-icon {
+        font-size: 24px;
+    }
+
+    .action-label {
+        font-size: 10px;
+    }
+
+    .modal-close {
+        top: 5px;
+        right: 5px;
+        width: 40px;
+        height: 40px;
+        font-size: 28px;
+    }
+
+    .tinder-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .control-group {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .control-group .btn {
+        padding: 12px 10px;
+        font-size: 12px;
+    }
+
+    .stats {
+        text-align: center;
+        font-size: 12px;
+    }
+
+    .stats span {
+        margin-left: 10px;
+    }
+
+    /* Markings view mobile */
+    .markings-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+
+    .markings-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .markings-filters {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 5px;
+    }
+
+    .filter-btn {
+        padding: 10px 5px;
+        font-size: 11px;
+    }
+
+    .marking-item {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .marking-info {
+        flex: 1 1 calc(100% - 70px);
+    }
+
+    .marking-decision {
+        order: 3;
+        flex: 0 0 auto;
+    }
+
+    .marking-actions {
+        order: 4;
+        flex: 1 1 100%;
+        justify-content: space-around;
+    }
+
+    .marking-actions button {
+        padding: 10px 15px;
+        font-size: 16px;
+    }
+}
+
+/* Small phones */
+@media (max-width: 380px) {
+    .tinder-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .control-group {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .markings-filters {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
