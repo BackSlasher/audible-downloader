@@ -96,19 +96,19 @@ def display_library(library: Library):
 def select_books(library: Library) -> list:
     """Interactive checkbox selection of books."""
     choices = []
-    for item in library:
+    for i, item in enumerate(library):
         authors = ", ".join(a["name"] for a in (item.authors or []))[:30]
         title = item.full_title[:50]
         label = f"{title} - {authors}"
-        choices.append(Choice(item, label))
+        choices.append(Choice(i, label))  # Store index, not item (items aren't picklable)
 
-    selected = inquirer.checkbox(
+    selected_indices = inquirer.checkbox(
         message="Select books to download (Space to select, Enter to confirm):",
         choices=choices,
         cycle=True,
     ).execute()
 
-    return selected
+    return [library[i] for i in selected_indices]
 
 
 async def download_book(auth: audible.Authenticator, item, output_dir: Path) -> dict | None:
@@ -377,34 +377,8 @@ def convert_to_mp3(download_result: dict, activation_bytes: str | None) -> bool:
     return True
 
 
-async def main_async():
-    """Async main function."""
-    console.print("\n[bold cyan]Audible Downloader[/bold cyan]")
-    console.print("[dim]Download and convert Audible books to MP3[/dim]\n")
-
-    # Load or create auth
-    auth = load_auth()
-
-    # Fetch library
-    library = await fetch_library(auth)
-
-    if len(library) == 0:
-        console.print("[yellow]No books found in library.[/yellow]")
-        return
-
-    # Display and select books
-    display_library(library)
-    selected = select_books(library)
-
-    if not selected:
-        console.print("[yellow]No books selected.[/yellow]")
-        return
-
-    console.print(f"\n[cyan]Selected {len(selected)} book(s)[/cyan]")
-
-    # Get activation bytes for AAX files
-    activation_bytes = get_activation_bytes(auth)
-
+async def main_async(auth: audible.Authenticator, selected: list, activation_bytes: str | None):
+    """Async main function - handles downloading and converting."""
     # Download and convert
     DOWNLOADS_DIR.mkdir(exist_ok=True)
 
@@ -419,7 +393,35 @@ async def main_async():
 def main():
     """Main entry point."""
     try:
-        asyncio.run(main_async())
+        console.print("\n[bold cyan]Audible Downloader[/bold cyan]")
+        console.print("[dim]Download and convert Audible books to MP3[/dim]\n")
+
+        # Load or create auth (sync - interactive prompts)
+        auth = load_auth()
+
+        # Fetch library (async)
+        library = asyncio.run(fetch_library(auth))
+
+        if len(library) == 0:
+            console.print("[yellow]No books found in library.[/yellow]")
+            return
+
+        # Display and select books (sync - interactive prompts)
+        display_library(library)
+        selected = select_books(library)
+
+        if not selected:
+            console.print("[yellow]No books selected.[/yellow]")
+            return
+
+        console.print(f"\n[cyan]Selected {len(selected)} book(s)[/cyan]")
+
+        # Get activation bytes for AAX files
+        activation_bytes = get_activation_bytes(auth)
+
+        # Download and convert (async)
+        asyncio.run(main_async(auth, selected, activation_bytes))
+
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/yellow]")
         sys.exit(1)
