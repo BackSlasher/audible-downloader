@@ -22,23 +22,30 @@ DOWNLOADS_DIR = Path("data/downloads")
 
 
 def cleanup_orphaned_directories():
-    """Remove download directories that don't have corresponding books in the database."""
+    """Remove download directories that don't have corresponding jobs or books in the database."""
     if not DOWNLOADS_DIR.exists():
         return
 
     known_paths = db.get_all_book_paths()
+    known_job_ids = db.get_all_job_ids()
     removed = 0
 
-    for user_dir in DOWNLOADS_DIR.iterdir():
-        if not user_dir.is_dir():
+    for item in DOWNLOADS_DIR.iterdir():
+        if not item.is_dir():
             continue
-        for book_dir in user_dir.iterdir():
-            if not book_dir.is_dir():
-                continue
-            if str(book_dir) not in known_paths:
-                print(f"Removing orphaned directory: {book_dir}")
-                shutil.rmtree(book_dir)
-                removed += 1
+
+        # Check if this is a job directory (numeric name)
+        if item.name.isdigit():
+            job_id = int(item.name)
+            if job_id in known_job_ids or str(item) in known_paths:
+                continue  # Active job or completed book
+        else:
+            # Legacy user directory structure - skip for now
+            continue
+
+        print(f"Removing orphaned directory: {item}")
+        shutil.rmtree(item)
+        removed += 1
 
     if removed:
         print(f"Cleaned up {removed} orphaned directories")

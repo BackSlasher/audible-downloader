@@ -443,6 +443,13 @@ def get_all_book_paths() -> set[str]:
         return {row["path"] for row in rows}
 
 
+def get_all_job_ids() -> set[int]:
+    """Get all job IDs from the database."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT id FROM jobs").fetchall()
+        return {row["id"] for row in rows}
+
+
 def reset_stuck_jobs():
     """Reset jobs stuck in active states back to pending."""
     with get_db() as conn:
