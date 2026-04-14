@@ -259,6 +259,9 @@ class ConvertWorker:
             # Create zip
             self._create_zip(book_dir)
 
+            # Cleanup intermediate files (keep only zip and cover)
+            self._cleanup(book_dir)
+
             # Save to database
             db.save_book(user.id, job.asin, job.title, authors, str(book_dir))
 
@@ -399,6 +402,17 @@ class ConvertWorker:
             cover = book_dir / "cover.jpg"
             if cover.exists():
                 zf.write(cover, "cover.jpg")
+
+    def _cleanup(self, book_dir: Path):
+        """Remove intermediate files after zip is created, keep only zip and cover."""
+        keep = {"audiobook.zip", "cover.jpg"}
+        for item in book_dir.iterdir():
+            if item.name in keep:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
 
 
 def _safe_filename(name: str) -> str:
