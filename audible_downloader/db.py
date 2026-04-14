@@ -138,6 +138,8 @@ def get_db():
     """Get a database connection."""
     conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
         conn.commit()
