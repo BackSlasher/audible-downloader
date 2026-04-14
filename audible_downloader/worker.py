@@ -340,8 +340,13 @@ class ConvertWorker:
                 end_sec = (start_ms + length_ms) / 1000
 
                 output_file = mp3_dir / f"{i:03d} - {safe_title}.mp3"
+                expected_duration = length_ms / 1000
                 if output_file.exists():
-                    return i  # Already done
+                    actual_duration = _get_mp3_duration(output_file)
+                    if actual_duration and actual_duration >= expected_duration - 1:
+                        return i  # Already done and complete
+                    # Incomplete file - delete and reconvert
+                    output_file.unlink()
 
                 cmd = [
                     "ffmpeg", "-v", "error",
@@ -418,6 +423,19 @@ class ConvertWorker:
 def _safe_filename(name: str) -> str:
     """Create a safe filename from a string."""
     return "".join(c for c in name if c.isalnum() or c in " -_").strip()[:100]
+
+
+def _get_mp3_duration(file_path: Path) -> float | None:
+    """Get actual duration of MP3 file in seconds using ffprobe."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(file_path)],
+            capture_output=True, text=True, check=True
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return None
 
 
 def _flatten_chapters(chapters: list, parent_title: str = None) -> list:
