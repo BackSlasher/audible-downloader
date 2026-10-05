@@ -24,6 +24,10 @@ class JobStage(str, Enum):
     DOWNLOADING = "downloading"
     PENDING_CONVERT = "pending_convert"
     CONVERTING = "converting"
+    # MP3 is an opt-in second pass over a book that already has its m4b, so a job
+    # re-enters these stages after it has once reached COMPLETED.
+    PENDING_MP3 = "pending_mp3"
+    ENCODING_MP3 = "encoding_mp3"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -289,6 +293,37 @@ def create_job(user_id: int, asin: str, title: str) -> Optional[Job]:
         )
 
 
+def queue_mp3_job(user_id: int, asin: str, title: str) -> Optional[Job]:
+    """Queue the MP3 pass for an already-downloaded book.
+
+    Reuses the book's job row when it has one, since a book has at most one job.
+    Returns None if that job is still busy with something else.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE user_id = ? AND asin = ?", (user_id, asin)
+        ).fetchone()
+
+        if row:
+            stage = JobStage(row["stage"]) if row["stage"] else JobStage.PENDING_DOWNLOAD
+            if stage not in (JobStage.COMPLETED, JobStage.FAILED):
+                return None
+            conn.execute(
+                "UPDATE jobs SET status = ?, stage = ?, progress = ?, error = NULL, "
+                "progress_detail = NULL, completed_at = NULL WHERE id = ?",
+                (JobStatus.PENDING.value, JobStage.PENDING_MP3.value, 50, row["id"])
+            )
+            job_id = row["id"]
+        else:
+            cursor = conn.execute(
+                "INSERT INTO jobs (user_id, asin, title, status, stage, progress) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, asin, title, JobStatus.PENDING.value, JobStage.PENDING_MP3.value, 50)
+            )
+            job_id = cursor.lastrowid
+
+        return _row_to_job(conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone())
+
+
 def get_pending_job() -> Optional[Job]:
     """Get the next pending job (legacy, for backwards compat)."""
     return get_job_by_stage(JobStage.PENDING_DOWNLOAD)
@@ -364,7 +399,8 @@ def update_job_stage(job_id: int, stage: JobStage, progress: int = 0, error: str
                 (JobStatus.FAILED.value, stage.value, progress, error, None, datetime.now(), job_id)
             )
         else:
-            status = JobStatus.RUNNING if stage in (JobStage.DOWNLOADING, JobStage.CONVERTING) else JobStatus.PENDING
+            active = (JobStage.DOWNLOADING, JobStage.CONVERTING, JobStage.ENCODING_MP3)
+            status = JobStatus.RUNNING if stage in active else JobStatus.PENDING
             conn.execute(
                 "UPDATE jobs SET status = ?, stage = ?, progress = ?, error = ?, progress_detail = ? WHERE id = ?",
                 (status.value, stage.value, progress, error, progress_detail, job_id)
@@ -467,5 +503,13 @@ def reset_stuck_jobs():
         )
         convert_reset = cursor.rowcount
 
-        if download_reset or convert_reset:
-            print(f"Reset {download_reset} stuck downloads, {convert_reset} stuck conversions")
+        # Reset encoding_mp3 -> pending_mp3
+        cursor = conn.execute(
+            "UPDATE jobs SET stage = ?, status = ?, progress = 50, progress_detail = NULL WHERE stage = ?",
+            (JobStage.PENDING_MP3.value, JobStatus.PENDING.value, JobStage.ENCODING_MP3.value)
+        )
+        mp3_reset = cursor.rowcount
+
+        if download_reset or convert_reset or mp3_reset:
+            print(f"Reset {download_reset} stuck downloads, {convert_reset} stuck conversions, "
+                  f"{mp3_reset} stuck mp3 encodes")

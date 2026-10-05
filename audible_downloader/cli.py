@@ -12,6 +12,8 @@ from rich.console import Console
 from rich.table import Table
 
 import audible
+
+from .worker import _mp3_target_bitrate, _probe_audio
 from audible_cli.models import Library
 
 console = Console()
@@ -286,12 +288,10 @@ def convert_to_mp3(download_result: dict, activation_bytes: str | None) -> bool:
     album = tags.get("album", title)
     genre = tags.get("genre", "Audiobook")
 
-    # Get bitrate
-    bitrate = format_info.get("bit_rate", "128000")
-    try:
-        bitrate = f"{int(bitrate) // 1000}k"
-    except (ValueError, TypeError):
-        bitrate = "128k"
+    # MP3 needs more bits than AAC for the same result, so the target is twice the
+    # source rather than a match for it. See worker._mp3_target_bitrate.
+    src_bitrate, sample_rate = _probe_audio(audio_file, decrypt_params)
+    bitrate = _mp3_target_bitrate(src_bitrate, sample_rate)
 
     # Output directory for MP3s
     mp3_dir = book_dir / "mp3"

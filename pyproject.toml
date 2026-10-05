@@ -21,6 +21,11 @@ dependencies = [
 audible-downloader = "audible_downloader.cli:main"
 audible-downloader-web = "audible_downloader.web:run_server"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

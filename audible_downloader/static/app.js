@@ -256,7 +256,9 @@ function getStageLabel(stage) {
         'pending_download': 'Queued',
         'downloading': 'Downloading',
         'pending_convert': 'Waiting to convert',
-        'converting': 'Converting',
+        'converting': 'Building M4B',
+        'pending_mp3': 'Waiting to encode MP3',
+        'encoding_mp3': 'Encoding MP3',
         'completed': 'Completed',
         'failed': 'Failed'
     };
@@ -282,7 +284,7 @@ function renderJobs(jobs) {
                     ${job.error ? `<div style="color: #c0392b; font-size: 12px; margin-top: 5px;">${escapeHtml(job.error)}</div>` : ''}
                 </div>
                 <div class="job-actions">
-                    ${job.stage === 'downloading' || job.stage === 'converting' ? `
+                    ${['downloading', 'converting', 'encoding_mp3'].includes(job.stage) ? `
                         <div class="progress-bar" title="${escapeHtml(tooltip)}">
                             <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
                         </div>
@@ -322,18 +324,41 @@ function renderDownloads(books) {
         return;
     }
 
-    downloadsList.innerHTML = books.map(book => `
+    downloadsList.innerHTML = books.map(book => {
+        const m4b = book.has_m4b
+            ? `<a href="/api/download/${book.asin}/m4b" class="btn primary">Download M4B</a>`
+            : '';
+        const mp3 = book.has_zip
+            ? `<a href="/api/download/${book.asin}/zip" class="btn small">Download MP3 ZIP</a>`
+            : (book.has_m4b
+                ? `<button class="btn small" onclick="makeMp3('${book.asin}')">Make MP3 ZIP</button>`
+                : `<a href="/api/download/${book.asin}/zip" class="btn primary">Download ZIP</a>`);
+
+        return `
         <div class="download-item">
             <div class="download-info">
                 <div class="download-title">${escapeHtml(book.title)}</div>
                 <div class="download-author">${escapeHtml(book.author || '')}</div>
             </div>
             <div class="download-actions">
-                <a href="/api/download/${book.asin}" class="btn primary">Download ZIP</a>
+                ${m4b}
+                ${mp3}
                 <button class="btn danger small" onclick="deleteBook(${book.id}, '${escapeHtml(book.title)}')">Delete</button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+}
+
+async function makeMp3(asin) {
+    try {
+        const res = await fetch(`/api/books/${asin}/mp3`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+        loadJobs();
+        loadDownloads();
+    } catch (err) {
+        alert('Failed to queue MP3 encode: ' + err.message);
+    }
 }
 
 async function deleteBook(bookId, title) {

@@ -22,7 +22,7 @@ from itsdangerous import URLSafeSerializer
 from audible_cli.models import Library
 
 from . import db
-from .worker import worker, DOWNLOADS_DIR
+from .worker import worker, DOWNLOADS_DIR, M4B_NAME
 
 DEBUG = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
 app = FastAPI(title="Audible Downloader", debug=DEBUG)
@@ -394,6 +394,8 @@ async def get_books(request: Request):
                 "title": b.title,
                 "author": b.author,
                 "path": b.path,
+                "has_m4b": bool(b.path) and (Path(b.path) / M4B_NAME).exists(),
+                "has_zip": bool(b.path) and (Path(b.path) / "audiobook.zip").exists(),
                 "created_at": b.created_at.isoformat() if b.created_at else None
             }
             for b in books
@@ -401,9 +403,46 @@ async def get_books(request: Request):
     }
 
 
+def _book_file(user: db.User, asin: str, name: str) -> tuple[Path, str]:
+    """Locate one of a book's artifacts, with a filename to serve it under."""
+    book = db.get_book(user.id, asin)
+    if not book or not book.path:
+        raise HTTPException(404, "Book not found")
+
+    path = Path(book.path) / name
+    if not path.exists():
+        raise HTTPException(404, f"{name} not available for this book")
+
+    safe_title = "".join(c for c in book.title if c.isalnum() or c in " -_").strip()[:50]
+    return path, safe_title
+
+
 @app.get("/api/download/{asin}")
+@app.get("/api/download/{asin}/m4b")
+async def download_book_m4b(request: Request, asin: str):
+    """Download the book as an m4b - the unencrypted copy of what Audible delivered."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    path, safe_title = _book_file(user, asin, M4B_NAME)
+    return FileResponse(path, media_type="audio/mp4", filename=f"{safe_title}.m4b")
+
+
+@app.get("/api/download/{asin}/zip")
 async def download_book_zip(request: Request, asin: str):
-    """Download the zip file for a book."""
+    """Download the MP3 zip, for players that read nothing else."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    path, safe_title = _book_file(user, asin, "audiobook.zip")
+    return FileResponse(path, media_type="application/zip", filename=f"{safe_title}.zip")
+
+
+@app.post("/api/books/{asin}/mp3")
+async def request_mp3(request: Request, asin: str):
+    """Queue the MP3 pass for a book that already has its m4b."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(401, "Not authenticated")
@@ -412,17 +451,14 @@ async def download_book_zip(request: Request, asin: str):
     if not book or not book.path:
         raise HTTPException(404, "Book not found")
 
-    zip_file = Path(book.path) / "audiobook.zip"
-    if not zip_file.exists():
-        raise HTTPException(404, "Zip file not found")
+    if not (Path(book.path) / M4B_NAME).exists():
+        raise HTTPException(409, "This book predates the m4b output - re-download it first")
 
-    safe_title = "".join(c for c in book.title if c.isalnum() or c in " -_").strip()[:50]
+    job = db.queue_mp3_job(user.id, asin, book.title)
+    if not job:
+        raise HTTPException(409, "This book already has a job in progress")
 
-    return FileResponse(
-        zip_file,
-        media_type="application/zip",
-        filename=f"{safe_title}.zip"
-    )
+    return {"job": {"id": job.id, "asin": job.asin, "title": job.title, "stage": job.stage.value}}
 
 
 @app.delete("/api/jobs/{job_id}")
