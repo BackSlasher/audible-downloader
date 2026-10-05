@@ -26,23 +26,12 @@ def main():
     # Init DB
     db.init_db()
 
-    # Get user (assuming single user from CLI auth import)
-    users = db.get_all_users() if hasattr(db, 'get_all_users') else None
-    if not users:
-        # Fallback: query directly
-        import sqlite3
-        conn = sqlite3.connect("data/audible.db")
-        cur = conn.execute("SELECT id, email FROM users LIMIT 1")
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            print("Error: No users in database. Run the web app and login first.")
-            sys.exit(1)
-        user_id, user_email = row
-    else:
-        user_id, user_email = users[0].id, users[0].email
+    credential = db.get_credential()
+    if not credential:
+        print("Error: no Audible account connected. Run the web app and log in first.")
+        sys.exit(1)
 
-    print(f"User: {user_email} (id={user_id})")
+    print(f"Account: {credential.account_name}")
 
     # Read CSV
     with open(csv_path) as f:
@@ -52,11 +41,11 @@ def main():
     print(f"CSV has {len(books)} books")
 
     # Get already downloaded books
-    downloaded = {b.asin for b in db.get_user_books(user_id)}
+    downloaded = {b.asin for b in db.get_books()}
     print(f"Already downloaded: {len(downloaded)}")
 
     # Get pending/in-progress jobs
-    jobs = db.get_user_jobs(user_id)
+    jobs = db.get_jobs()
     in_progress = {j.asin for j in jobs if j.status.value in ('pending', 'running')}
     completed_jobs = {j.asin for j in jobs if j.status.value == 'completed'}
     print(f"Jobs in progress: {len(in_progress)}")
@@ -104,7 +93,7 @@ def main():
     queued = 0
     skipped = 0
     for book in to_download:
-        job = db.create_job(user_id, book['asin'], book['title'])
+        job = db.create_job(book['asin'], book['title'])
         if job:
             queued += 1
             print(f"Queued: {book['title'][:50]}")
@@ -124,7 +113,7 @@ def main():
             # Wait for jobs to complete
             import time
             while True:
-                jobs = db.get_user_jobs(user_id)
+                jobs = db.get_jobs()
                 active = [j for j in jobs if j.status.value in ('pending', 'running')]
                 if not active:
                     print("All jobs completed!")

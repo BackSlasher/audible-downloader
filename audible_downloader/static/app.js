@@ -62,8 +62,8 @@ function showLoggedIn() {
     downloadsSection.classList.remove('hidden');
 
     userInfo.innerHTML = `
-        <span class="email">${currentUser.email}</span>
-        <button class="btn danger" onclick="logout()">Logout</button>
+        <span class="email">${escapeHtml(currentUser.email || 'connected')}</span>
+        <button class="btn danger" onclick="logout()" title="Deregisters this device with Audible">Disconnect</button>
     `;
 
     loadLibrary();
@@ -116,6 +116,7 @@ async function completeLogin() {
 }
 
 async function logout() {
+    if (!confirm('Disconnect the Audible account? This deregisters the device with Amazon; your downloaded books are kept.')) return;
     try {
         await fetch('/api/auth/logout', { method: 'POST' });
         currentUser = null;

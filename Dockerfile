@@ -7,12 +7,12 @@ RUN apt update && apt install -y ffmpeg sqlite3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Copy project files
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock ./
 COPY audible_downloader/ ./audible_downloader/
 COPY README.md .
 
-# Install the project
-RUN uv sync
+# Install the project. --no-dev keeps the test tooling out of the image.
+RUN uv sync --no-dev
 
 # Create directories for data
 RUN mkdir -p /app/data /app/downloads

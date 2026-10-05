@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import zipfile
@@ -96,11 +97,11 @@ class DownloadWorker:
         db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=0)
 
         try:
-            user = db.get_user_by_id(job.user_id)
-            if not user:
-                raise Exception("User not found")
+            credential = db.get_credential()
+            if not credential:
+                raise Exception("No Audible account connected")
 
-            asyncio.run(self._download(job, user))
+            asyncio.run(self._download(job, credential))
 
             # Move to convert queue
             db.update_job_stage(job.id, db.JobStage.PENDING_CONVERT, progress=50)
@@ -110,8 +111,8 @@ class DownloadWorker:
             print(f"Job {job.id} download failed: {e}")
             db.update_job_stage(job.id, db.JobStage.FAILED, error=str(e))
 
-    async def _download(self, job: db.Job, user: db.User):
-        auth = audible.Authenticator.from_dict(user.auth_data)
+    async def _download(self, job: db.Job, credential: db.Credential):
+        auth = audible.Authenticator.from_dict(credential.auth_data)
 
         book_dir = DOWNLOADS_DIR / str(job.id)
         book_dir.mkdir(parents=True, exist_ok=True)
@@ -255,9 +256,9 @@ class ConvertWorker:
         db.update_job_stage(job.id, db.JobStage.CONVERTING, progress=50)
 
         try:
-            user = db.get_user_by_id(job.user_id)
-            if not user:
-                raise Exception("User not found")
+            credential = db.get_credential()
+            if not credential:
+                raise Exception("No Audible account connected")
 
             book_dir = DOWNLOADS_DIR / str(job.id)
 
@@ -273,14 +274,14 @@ class ConvertWorker:
             is_aaxc = meta["is_aaxc"]
             authors = meta["authors"]
 
-            decrypt_params = self._decrypt_params(book_dir, is_aaxc, user.auth_data)
+            decrypt_params = self._decrypt_params(book_dir, is_aaxc, credential.auth_data)
             self._remux_to_m4b(job.id, book_dir, audio_file, decrypt_params, job.title, authors)
 
             # The m4b holds the decrypted stream, so the encrypted download and its
             # voucher are no longer needed to produce anything else.
             self._cleanup(book_dir)
 
-            db.save_book(user.id, job.asin, job.title, authors, str(book_dir))
+            db.save_book(job.asin, job.title, authors, str(book_dir))
 
             db.update_job_stage(job.id, db.JobStage.COMPLETED, progress=100)
             print(f"Job {job.id} completed")
@@ -294,11 +295,7 @@ class ConvertWorker:
         db.update_job_stage(job.id, db.JobStage.ENCODING_MP3, progress=50)
 
         try:
-            user = db.get_user_by_id(job.user_id)
-            if not user:
-                raise Exception("User not found")
-
-            book = db.get_book(user.id, job.asin)
+            book = db.get_book(job.asin)
             book_dir = Path(book.path) if book and book.path else DOWNLOADS_DIR / str(job.id)
             m4b_file = book_dir / M4B_NAME
             if not m4b_file.exists():
@@ -380,19 +377,22 @@ class ConvertWorker:
             "-f", "mp4", str(tmp_file),
         ]
 
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        for line in proc.stdout:
-            if line.startswith("out_time_ms=") and duration:
-                try:
-                    done = int(line.split("=", 1)[1]) / 1_000_000
-                except ValueError:
-                    continue
-                pct = 50 + int(min(done / duration, 1.0) * 45)
-                detail = f"{done / 3600:.1f} / {duration / 3600:.1f} h"
-                db.update_job_stage(job_id, db.JobStage.CONVERTING, progress=pct, progress_detail=detail)
-        stderr = proc.stderr.read()
-        if proc.wait() != 0:
-            raise Exception(f"Remux failed: {stderr.strip()[:300]}")
+        # stderr goes to a file rather than a second pipe: reading stdout to completion
+        # first would deadlock if a chatty failure filled the stderr pipe buffer.
+        with tempfile.TemporaryFile("w+") as errfile:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfile, text=True)
+            for line in proc.stdout:
+                if line.startswith("out_time_ms=") and duration:
+                    try:
+                        done = int(line.split("=", 1)[1]) / 1_000_000
+                    except ValueError:
+                        continue
+                    pct = 50 + int(min(done / duration, 1.0) * 45)
+                    detail = f"{done / 3600:.1f} / {duration / 3600:.1f} h"
+                    db.update_job_stage(job_id, db.JobStage.CONVERTING, progress=pct, progress_detail=detail)
+            if proc.wait() != 0:
+                errfile.seek(0)
+                raise Exception(f"Remux failed: {errfile.read().strip()[:300]}")
 
         tmp_file.replace(m4b_file)
 
@@ -513,9 +513,11 @@ def _mp3_target_bitrate(src_bitrate: int, sample_rate: int) -> str:
     measurements stop improving because the encoder runs out of detail to preserve.
     """
     cap = MP3_CBR_CAP_LOW_RATE if sample_rate and sample_rate <= 24000 else MP3_CBR_CAP
-    want = min((src_bitrate or 64000) * 2 // 1000, cap)
-    usable = [r for r in MP3_CBR_RATES if r <= want] or [MP3_CBR_RATES[0]]
-    return f"{usable[-1]}k"
+    want = (src_bitrate or 64000) * 2 / 1000
+    # Nearest usable rate, not the nearest one below: a real 64k Audible stream measures
+    # about 62.8k, and rounding down from there drops a whole step to 112k.
+    usable = [r for r in MP3_CBR_RATES if r <= cap]
+    return f"{min(usable, key=lambda r: abs(r - want))}k"
 
 
 def _probe_audio(path: Path, decrypt_params: list[str] = ()) -> tuple[int, int]:

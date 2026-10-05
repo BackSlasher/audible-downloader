@@ -60,14 +60,25 @@ def book_dir(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("src_bitrate,sample_rate,expected", [
-    (64_000, 22050, "128k"),    # the 2010-era Audible master
-    (128_000, 44100, "192k"),   # a remastered title, capped
-    (32_000, 22050, "64k"),
+    # Measured, not nominal: a real "64k" Audible stream probes at 62,794 b/s, and
+    # rounding that down lands a whole CBR step low.
+    (62_794, 22050, "128k"),
+    (64_000, 22050, "128k"),
+    (126_000, 44100, "192k"),   # a remastered title, capped
+    (128_000, 44100, "192k"),
+    (31_000, 22050, "64k"),
     (160_000, 22050, "160k"),   # MPEG2 layer III goes no higher
     (0, 0, "128k"),             # unknown source falls back to a safe default
 ])
 def test_mp3_target_bitrate(src_bitrate, sample_rate, expected):
     assert worker._mp3_target_bitrate(src_bitrate, sample_rate) == expected
+
+
+def test_mp3_target_is_never_more_than_a_step_from_double():
+    """Whatever the source probes at, the target stays near 2x rather than snapping far."""
+    for src in range(30_000, 80_000, 311):
+        target = int(worker._mp3_target_bitrate(src, 22050).rstrip("k")) * 1000
+        assert abs(target - src * 2) <= 16_000, src
 
 
 def test_mp3_target_never_matches_the_source():
@@ -199,48 +210,53 @@ def test_zip_holds_the_mp3s_and_the_cover(book_dir):
 # Job queueing
 
 
-def test_queue_mp3_job_reuses_a_completed_job(tmp_path, monkeypatch):
+@pytest.fixture
+def database(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     db.init_db()
-    user = db.get_or_create_user("someone", {"a": 1})
 
-    job = db.create_job(user.id, "B0036RARRK", "The Temporal Void")
+
+def test_queue_mp3_job_reuses_a_completed_job(database):
+    job = db.create_job("B0036RARRK", "The Temporal Void")
     db.update_job_stage(job.id, db.JobStage.COMPLETED)
 
-    queued = db.queue_mp3_job(user.id, "B0036RARRK", "The Temporal Void")
+    queued = db.queue_mp3_job("B0036RARRK", "The Temporal Void")
     assert queued.id == job.id
     assert queued.stage == db.JobStage.PENDING_MP3
     assert queued.completed_at is None
 
 
-def test_queue_mp3_job_refuses_while_a_job_is_running(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    db.init_db()
-    user = db.get_or_create_user("someone", {"a": 1})
-
-    job = db.create_job(user.id, "B0036RARRK", "The Temporal Void")
+def test_queue_mp3_job_refuses_while_a_job_is_running(database):
+    job = db.create_job("B0036RARRK", "The Temporal Void")
     db.update_job_stage(job.id, db.JobStage.DOWNLOADING)
 
-    assert db.queue_mp3_job(user.id, "B0036RARRK", "The Temporal Void") is None
+    assert db.queue_mp3_job("B0036RARRK", "The Temporal Void") is None
 
 
-def test_queue_mp3_job_creates_a_row_for_a_book_with_no_job(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    db.init_db()
-    user = db.get_or_create_user("someone", {"a": 1})
-
-    queued = db.queue_mp3_job(user.id, "B0046VSYXE", "The Evolutionary Void")
+def test_queue_mp3_job_creates_a_row_for_a_book_with_no_job(database):
+    queued = db.queue_mp3_job("B0046VSYXE", "The Evolutionary Void")
     assert queued.stage == db.JobStage.PENDING_MP3
     assert db.get_job(queued.id) is not None
 
 
-def test_stuck_mp3_encodes_are_requeued(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    db.init_db()
-    user = db.get_or_create_user("someone", {"a": 1})
-
-    job = db.create_job(user.id, "B0036RARRK", "T")
+def test_stuck_mp3_encodes_are_requeued(database):
+    job = db.create_job("B0036RARRK", "T")
     db.update_job_stage(job.id, db.JobStage.ENCODING_MP3, progress=70)
 
     db.reset_stuck_jobs()
     assert db.get_job(job.id).stage == db.JobStage.PENDING_MP3
+
+
+def test_a_finished_book_can_be_fetched_again(database):
+    """Re-downloading replaces the old job rather than being refused by the unique asin."""
+    first = db.create_job("B0036RARRK", "T")
+    db.update_job_stage(first.id, db.JobStage.COMPLETED)
+
+    second = db.create_job("B0036RARRK", "T")
+    assert second is not None and second.id != first.id
+    assert db.get_job(first.id) is None
+
+
+def test_a_running_job_is_not_duplicated(database):
+    db.create_job("B0036RARRK", "T")
+    assert db.create_job("B0036RARRK", "T") is None

@@ -8,15 +8,29 @@ CLI and web app for downloading Audible audiobooks as DRM-free m4b, with MP3 on 
 audible_downloader/
 ├── cli.py          # CLI entry point (interactive terminal UI)
 ├── web.py          # FastAPI web app
-├── db.py           # SQLite database (users, books, jobs)
+├── db.py           # SQLite database (the stored credential, books, jobs)
 ├── worker.py       # Background job processor for downloads
 └── static/         # Web UI (HTML, CSS, JS)
 tests/              # pytest; the ffmpeg tests stand a plain AAC file in for an aaxc
 ```
 
+## Access and identity
+
+The app holds **one** Audible account and has no users, sessions or passwords. Who may
+reach it is decided outside the app, by the client certificate its reverse proxy
+requires (`modules/fort/services.nix` in the athena-nixos repo). The cookie carries
+only an in-flight OAuth handshake, for the minutes it takes to complete.
+
+This matters because an Audible "login" is really a **device registration**: the stored
+credential is an RSA device key plus an `adp_token` and refresh token, which cannot be
+scoped down or expired, and Amazon caps how many registrations a customer may hold. So
+connecting an account is a costly, account-mutating act, not a cheap sign-in — which is
+why it must not be repeated merely because a browser forgot a cookie, and why
+`release_previous_device` frees the registration it replaces.
+
 ## How It Works
 
-1. **Authentication**: OAuth with Audible via browser, stores auth data per user
+1. **Connecting**: OAuth with Audible via browser, registers a device, stores the one credential
 2. **Library**: Fetches from Audible API using `audible-cli` library models
 3. **Download**: Gets AAXC (preferred) or AAX format with chapter metadata
 4. **Remux**: ffmpeg decrypts and stream-copies the AAC into `book.m4b` with chapter

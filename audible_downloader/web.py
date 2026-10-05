@@ -17,7 +17,7 @@ from audible.register import register
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import URLSafeSerializer
+from itsdangerous import URLSafeTimedSerializer
 
 from audible_cli.models import Library
 
@@ -41,7 +41,12 @@ def get_or_create_secret():
     return new_secret
 
 SECRET_KEY = get_or_create_secret()
-serializer = URLSafeSerializer(SECRET_KEY)
+
+# The cookie carries one in-flight OAuth handshake - a code verifier and a device
+# serial - and nothing else. It is not an identity: who may reach the app is decided
+# by the client certificate the reverse proxy requires.
+HANDSHAKE_MAX_AGE = 1800
+serializer = URLSafeTimedSerializer(SECRET_KEY)
 
 # Static files
 STATIC_DIR = Path(__file__).parent / "static"
@@ -64,34 +69,33 @@ async def shutdown():
 # Session helpers
 
 def get_session(request: Request) -> dict:
-    """Get session data from cookie."""
+    """Read the pending OAuth handshake from the cookie."""
     cookie = request.cookies.get("session")
     if cookie:
         try:
-            return serializer.loads(cookie)
+            return serializer.loads(cookie, max_age=HANDSHAKE_MAX_AGE)
         except Exception:
             pass
     return {}
 
 
 def set_session(response: Response, data: dict):
-    """Set session cookie."""
+    """Carry a pending OAuth handshake across the login round trip."""
     response.set_cookie(
         "session",
         serializer.dumps(data),
         httponly=True,
-        max_age=86400 * 30,  # 30 days
+        max_age=HANDSHAKE_MAX_AGE,
         samesite="lax"
     )
 
 
-def get_current_user(request: Request) -> Optional[db.User]:
-    """Get current user from session."""
-    session = get_session(request)
-    user_id = session.get("user_id")
-    if user_id:
-        return db.get_user_by_id(user_id)
-    return None
+def require_credential() -> db.Credential:
+    """The stored Audible registration, or a 401 telling the UI to connect an account."""
+    credential = db.get_credential()
+    if not credential:
+        raise HTTPException(401, "No Audible account connected")
+    return credential
 
 
 # Routes
@@ -110,10 +114,10 @@ async def tinder(request: Request):
 
 @app.get("/api/me")
 async def get_me(request: Request):
-    """Get current user info."""
-    user = get_current_user(request)
-    if user:
-        return {"email": user.email, "authenticated": True}
+    """Whether an Audible account is connected, and which."""
+    credential = db.get_credential()
+    if credential:
+        return {"email": credential.account_name, "authenticated": True}
     return {"authenticated": False}
 
 
@@ -206,19 +210,17 @@ async def auth_callback(request: Request, response_url: str):
         if auth.customer_info:
             name = auth.customer_info.get("name") or auth.customer_info.get("given_name") or "unknown"
 
-        # Save user
+        # The new registration is stored before the old one is released, so a failure
+        # in between leaves a working credential rather than none.
         auth_data = auth.to_dict()
-        user = db.get_or_create_user(name, auth_data)
+        previous = db.get_credential()
+        db.save_credential(auth_data, name)
+        if previous:
+            release_previous_device(previous.auth_data, auth_data)
 
-        # Update session
-        session["user_id"] = user.id
-        session.pop("oauth_locale", None)
-        session.pop("oauth_verifier", None)
-        session.pop("oauth_serial", None)
-        session.pop("oauth_domain", None)
-
+        # The handshake is finished, so the cookie has nothing left to carry.
         response = JSONResponse({"success": True, "email": name})
-        set_session(response, session)
+        response.delete_cookie("session")
         return response
 
     except HTTPException:
@@ -231,11 +233,50 @@ async def auth_callback(request: Request, response_url: str):
 
 
 @app.post("/api/auth/logout")
-async def logout(request: Request):
-    """Log out current user."""
+async def disconnect(request: Request):
+    """Disconnect the Audible account, releasing its device registration."""
+    credential = db.get_credential()
+    db.delete_credential()
+    if credential:
+        try:
+            audible.Authenticator.from_dict(credential.auth_data).deregister_device()
+        except Exception as e:
+            print(f"Could not deregister device on disconnect: {e}")
+
     response = JSONResponse({"success": True})
     response.delete_cookie("session")
     return response
+
+
+def _serial(auth_data: dict) -> Optional[str]:
+    return (auth_data.get("device_info") or {}).get("device_serial_number")
+
+
+def _customer(auth_data: dict) -> Optional[str]:
+    return (auth_data.get("customer_info") or {}).get("user_id")
+
+
+def release_previous_device(old_auth: dict, new_auth: dict):
+    """Deregister the device whose credential is being replaced.
+
+    Every login registers a new device with Amazon, and a customer may hold only so
+    many at once, so without this each login burns a slot that nothing ever frees.
+    Never raises: a login that worked must not fail over housekeeping.
+
+    Users are keyed on the account's display name, so two Amazon accounts sharing a
+    name land on one row. Deregistering only within the same customer keeps that from
+    cancelling a different person's device.
+    """
+    if not old_auth or _serial(old_auth) == _serial(new_auth):
+        return
+    if _customer(old_auth) != _customer(new_auth):
+        print("Not deregistering the previous device: it belongs to another customer")
+        return
+    try:
+        audible.Authenticator.from_dict(old_auth).deregister_device()
+        print(f"Deregistered replaced device {_serial(old_auth)}")
+    except Exception as e:
+        print(f"Could not deregister replaced device {_serial(old_auth)}: {e}")
 
 
 def clean_html(text):
@@ -247,17 +288,14 @@ def clean_html(text):
 @app.get("/api/library")
 async def get_library(request: Request, refresh: bool = False, full: bool = False):
     """Fetch user's Audible library. Uses cache unless refresh=true. full=true includes series/summary."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
+    credential = require_credential()
 
-    # Get existing downloaded books for this user
-    existing_books = {b.asin: b for b in db.get_user_books(user.id)}
+    existing_books = {b.asin: b for b in db.get_books()}
 
     # Check cache first (unless refresh requested)
     # Note: cache doesn't store full data, so skip cache if full=true
     if not refresh and not full:
-        cached = db.get_library_cache(user.id)
+        cached = db.get_library_cache()
         if cached is not None:
             # Update downloaded status from current DB state
             for book in cached:
@@ -268,7 +306,7 @@ async def get_library(request: Request, refresh: bool = False, full: bool = Fals
 
     # Fetch from Audible API
     try:
-        auth = audible.Authenticator.from_dict(user.auth_data)
+        auth = audible.Authenticator.from_dict(credential.auth_data)
 
         async with audible.AsyncClient(auth=auth) as client:
             library = await Library.from_api_full_sync(api_client=client)
@@ -303,7 +341,7 @@ async def get_library(request: Request, refresh: bool = False, full: bool = Fals
 
         # Save to cache (without full data)
         if not full:
-            db.save_library_cache(user.id, books)
+            db.save_library_cache(books)
 
         return {"books": books}
 
@@ -314,9 +352,7 @@ async def get_library(request: Request, refresh: bool = False, full: bool = Fals
 @app.post("/api/download")
 async def start_download(request: Request):
     """Start download job for selected books."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
+    credential = require_credential()
 
     body = await request.json()
     asins = body.get("asins", [])
@@ -325,7 +361,7 @@ async def start_download(request: Request):
         raise HTTPException(400, "No books selected")
 
     # Get book titles from library
-    auth = audible.Authenticator.from_dict(user.auth_data)
+    auth = audible.Authenticator.from_dict(credential.auth_data)
     async with audible.AsyncClient(auth=auth) as client:
         library = await Library.from_api_full_sync(api_client=client)
 
@@ -335,7 +371,7 @@ async def start_download(request: Request):
     skipped = 0
     for asin in asins:
         title = asin_to_title.get(asin, asin)
-        job = db.create_job(user.id, asin, title)
+        job = db.create_job(asin, title)
         if job:
             jobs.append({
                 "id": job.id,
@@ -351,12 +387,8 @@ async def start_download(request: Request):
 
 @app.get("/api/jobs")
 async def get_jobs(request: Request):
-    """Get all jobs for current user."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    jobs = db.get_user_jobs(user.id)
+    """Get all jobs."""
+    jobs = db.get_jobs()
 
     return {
         "jobs": [
@@ -379,12 +411,8 @@ async def get_jobs(request: Request):
 
 @app.get("/api/books")
 async def get_books(request: Request):
-    """Get downloaded books for current user."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    books = db.get_user_books(user.id)
+    """Get downloaded books."""
+    books = db.get_books()
 
     return {
         "books": [
@@ -403,9 +431,9 @@ async def get_books(request: Request):
     }
 
 
-def _book_file(user: db.User, asin: str, name: str) -> tuple[Path, str]:
+def _book_file(asin: str, name: str) -> tuple[Path, str]:
     """Locate one of a book's artifacts, with a filename to serve it under."""
-    book = db.get_book(user.id, asin)
+    book = db.get_book(asin)
     if not book or not book.path:
         raise HTTPException(404, "Book not found")
 
@@ -421,40 +449,28 @@ def _book_file(user: db.User, asin: str, name: str) -> tuple[Path, str]:
 @app.get("/api/download/{asin}/m4b")
 async def download_book_m4b(request: Request, asin: str):
     """Download the book as an m4b - the unencrypted copy of what Audible delivered."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    path, safe_title = _book_file(user, asin, M4B_NAME)
+    path, safe_title = _book_file(asin, M4B_NAME)
     return FileResponse(path, media_type="audio/mp4", filename=f"{safe_title}.m4b")
 
 
 @app.get("/api/download/{asin}/zip")
 async def download_book_zip(request: Request, asin: str):
     """Download the MP3 zip, for players that read nothing else."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    path, safe_title = _book_file(user, asin, "audiobook.zip")
+    path, safe_title = _book_file(asin, "audiobook.zip")
     return FileResponse(path, media_type="application/zip", filename=f"{safe_title}.zip")
 
 
 @app.post("/api/books/{asin}/mp3")
 async def request_mp3(request: Request, asin: str):
     """Queue the MP3 pass for a book that already has its m4b."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    book = db.get_book(user.id, asin)
+    book = db.get_book(asin)
     if not book or not book.path:
         raise HTTPException(404, "Book not found")
 
     if not (Path(book.path) / M4B_NAME).exists():
         raise HTTPException(409, "This book predates the m4b output - re-download it first")
 
-    job = db.queue_mp3_job(user.id, asin, book.title)
+    job = db.queue_mp3_job(asin, book.title)
     if not job:
         raise HTTPException(409, "This book already has a job in progress")
 
@@ -464,11 +480,7 @@ async def request_mp3(request: Request, asin: str):
 @app.delete("/api/jobs/{job_id}")
 async def delete_job(request: Request, job_id: int):
     """Delete a job."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    if db.delete_job(job_id, user.id):
+    if db.delete_job(job_id):
         return {"success": True}
     raise HTTPException(404, "Job not found")
 
@@ -476,11 +488,7 @@ async def delete_job(request: Request, job_id: int):
 @app.delete("/api/books/{book_id}")
 async def delete_book(request: Request, book_id: int):
     """Delete a downloaded book and its files."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
-
-    path = db.delete_book(book_id, user.id)
+    path = db.delete_book(book_id)
     if path:
         # Delete files from disk
         import shutil
