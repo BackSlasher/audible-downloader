@@ -6,6 +6,11 @@ RUN apt update && apt install -y ffmpeg sqlite3 && rm -rf /var/lib/apt/lists/*
 # Set up workspace
 WORKDIR /app
 
+# Without this, stdout is block-buffered because the container's output is not a tty,
+# and the workers' progress and failure messages sit in the buffer instead of reaching
+# `docker logs`.
+ENV PYTHONUNBUFFERED=1
+
 # Copy project files
 COPY pyproject.toml uv.lock ./
 COPY audible_downloader/ ./audible_downloader/
