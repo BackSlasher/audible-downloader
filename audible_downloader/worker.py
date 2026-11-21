@@ -15,6 +15,7 @@ from pathlib import Path
 import audible
 import httpx
 
+from audible_cli.exceptions import LicenseDenied
 from audible_cli.models import Library
 
 from . import db
@@ -29,6 +30,43 @@ M4B_NAME = "book.m4b"
 MP3_CBR_RATES = [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
 MP3_CBR_CAP_LOW_RATE = 160
 MP3_CBR_CAP = 192
+
+# Audible's CDN serves the aax/aaxc to the iOS app's user agent.
+DOWNLOAD_HEADERS = {"User-Agent": "Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0"}
+
+
+async def download_audio(http: httpx.AsyncClient, url, dest: Path, on_progress=None):
+    """Stream an aax/aaxc from `url` into `dest`.
+
+    The file is written beside `dest` and renamed into place only once complete:
+    callers skip the download when `dest` exists, so a partial file would be taken
+    for a finished one on every retry. A response with a text content type is a web
+    page (the legacy AAX URL answers with a sign-in page when it will not serve the
+    book), never audio, and is refused. `on_progress(downloaded, total)` is called per
+    chunk, with `total` 0 when the server sends no length.
+    """
+    part = dest.with_name(dest.name + ".part")
+    try:
+        async with http.stream("GET", str(url), follow_redirects=True) as resp:
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("content-type", "")
+            if content_type.startswith("text/"):
+                raise Exception(
+                    f"Download URL returned a web page ({content_type}) instead of audio: {resp.url}"
+                )
+
+            total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+            with open(part, "wb") as f:
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress:
+                        on_progress(downloaded, total)
+        part.rename(dest)
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def cleanup_orphaned_directories():
@@ -145,7 +183,13 @@ class DownloadWorker:
                 with open(voucher_file, "w") as f:
                     json.dump(license_resp, f, indent=2)
 
-            except Exception:
+            # A denied license means this account or device may not download the book
+            # at all, so it fails the job. AAX is no way around it: the legacy download
+            # needs website cookies that a device registration does not have.
+            except LicenseDenied:
+                raise
+            except Exception as e:
+                print(f"Job {job.id}: AAXC unavailable ({e!r}), falling back to AAX")
                 url, codec = await item.get_aax_url(quality="best")
 
             db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=15)
@@ -154,26 +198,17 @@ class DownloadWorker:
             ext = "aaxc" if is_aaxc else "aax"
             audio_file = book_dir / f"audio.{ext}"
 
-            download_headers = {"User-Agent": "Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0"}
+            def progress(downloaded, total):
+                if total > 0:
+                    pct = 15 + int((downloaded / total) * 30)
+                    mb_down = downloaded / (1024 * 1024)
+                    mb_total = total / (1024 * 1024)
+                    detail = f"{mb_down:.1f} / {mb_total:.1f} MB"
+                    db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=pct, progress_detail=detail)
 
             if not audio_file.exists():
-                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), headers=download_headers) as http:
-                    async with http.stream("GET", str(url), follow_redirects=True) as resp:
-                        resp.raise_for_status()
-
-                        total = int(resp.headers.get("content-length", 0))
-                        downloaded = 0
-
-                        with open(audio_file, "wb") as f:
-                            async for chunk in resp.aiter_bytes(chunk_size=65536):
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                if total > 0:
-                                    pct = 15 + int((downloaded / total) * 30)
-                                    mb_down = downloaded / (1024 * 1024)
-                                    mb_total = total / (1024 * 1024)
-                                    detail = f"{mb_down:.1f} / {mb_total:.1f} MB"
-                                    db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=pct, progress_detail=detail)
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), headers=DOWNLOAD_HEADERS) as http:
+                    await download_audio(http, url, audio_file, progress)
 
             db.update_job_stage(job.id, db.JobStage.DOWNLOADING, progress=45)
 

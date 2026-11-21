@@ -12,8 +12,9 @@ from rich.console import Console
 from rich.table import Table
 
 import audible
+import httpx
 
-from .worker import _mp3_target_bitrate, _probe_audio
+from .worker import _mp3_target_bitrate, _probe_audio, download_audio
 from audible_cli.models import Library
 
 console = Console()
@@ -151,25 +152,25 @@ async def download_book(auth: audible.Authenticator, item, output_dir: Path) -> 
             console.print(f"[yellow]Audio file already exists: {audio_file}[/yellow]")
         else:
             console.print(f"[dim]Downloading from: {url}[/dim]")
-            import httpx
             from rich.progress import Progress, BarColumn, DownloadColumn, TransferSpeedColumn
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as http_client:
-                async with http_client.stream("GET", str(url), follow_redirects=True) as resp:
-                    total = int(resp.headers.get("content-length", 0))
+            with Progress(
+                "[progress.description]{task.description}",
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+            ) as progress:
+                task = progress.add_task("Downloading", total=None)
 
-                    with Progress(
-                        "[progress.description]{task.description}",
-                        BarColumn(),
-                        DownloadColumn(),
-                        TransferSpeedColumn(),
-                    ) as progress:
-                        task = progress.add_task("Downloading", total=total)
+                def on_progress(downloaded, total):
+                    progress.update(task, completed=downloaded, total=total or None)
 
-                        with open(audio_file, "wb") as f:
-                            async for chunk in resp.aiter_bytes(chunk_size=8192):
-                                f.write(chunk)
-                                progress.update(task, advance=len(chunk))
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as http_client:
+                        await download_audio(http_client, url, audio_file, on_progress)
+                except Exception as e:
+                    console.print(f"[red]Download failed: {e}[/red]")
+                    return None
 
         # Get chapter info
         try:
